@@ -1,19 +1,27 @@
 /*****
- * Test Manflux PubSub with MQTT ESP32 Client
-******************/
+ * Test Manflux PubSub with MQTTS ESP32 Client
+ ******************/
 
 // include libraries
 #include <Arduino.h>
-#include <WiFi.h>
 #include <MqttClient.h>
+#include <WiFiClientSecure.h>
 
 #include "config.h"
+#include "system.h"
+#include "certificate.h"
 
-// Enable MqttClient logs
+// Enable MqttClient log
 #define MQTT_LOG_ENABLED 1
-
 #define LOG_PRINTFLN(fmt, ...) logfln(fmt, ##__VA_ARGS__)
 #define LOG_SIZE_MAX 128
+#define HW_UART_SPEED 115200L
+#define MQTT_ID "ESP32"
+
+static MqttClient *mqtt = NULL;
+static WiFiClientSecure network;
+int messageCount = 0;
+
 void logfln(const char *fmt, ...)
 {
 	char buf[LOG_SIZE_MAX];
@@ -23,27 +31,6 @@ void logfln(const char *fmt, ...)
 	va_end(ap);
 	Serial.println(buf);
 }
-
-#define HW_UART_SPEED 115200L
-#define MQTT_ID "ESP32"
-
-static MqttClient *mqtt = NULL;
-static WiFiClient network;
-
-// ============== Object to supply system functions ============================
-class System : public MqttClient::System
-{
-public:
-	unsigned long millis() const
-	{
-		return ::millis();
-	}
-
-	void yield(void)
-	{
-		::yield();
-	}
-};
 
 void processMessage(MqttClient::MessageData &md)
 {
@@ -56,9 +43,9 @@ void processMessage(MqttClient::MessageData &md)
 		msg.qos, msg.retained, msg.dup, msg.id, payload);
 }
 
-
 void setup()
 {
+	pinMode(LED_BUILTIN, OUTPUT);
 	// Setup hardware serial for logging
 	Serial.begin(HW_UART_SPEED);
 	while (!Serial)
@@ -67,7 +54,7 @@ void setup()
 	// Setup WiFi network
 	WiFi.mode(WIFI_STA);
 	WiFi.hostname("ESP_" MQTT_ID);
-	WiFi.begin(wifi_config.wifi_ssid, wifi_config.wifi_pass);
+	WiFi.begin(wifiConfig.wifiSsid, wifiConfig.wifiPass);
 	LOG_PRINTFLN("\n");
 	LOG_PRINTFLN("Connecting to WiFi");
 	while (WiFi.status() != WL_CONNECTED)
@@ -98,7 +85,6 @@ void setup()
 		*mqttRecvBuffer, *mqttMessageHandlers);
 }
 
-
 void loop()
 {
 	// Check connection status
@@ -107,8 +93,9 @@ void loop()
 		// Close connection if exists
 		network.stop();
 		// Re-establish TCP connection with MQTT broker
-		LOG_PRINTFLN("Connecting");
-		network.connect(server, 1883);
+		LOG_PRINTFLN("Connecting to MQTT Broker");
+		network.setCACert(DSTroot_CA);
+		network.connect(server, 8883);
 		if (!network.connected())
 		{
 			LOG_PRINTFLN("Can't establish the TCP connection");
@@ -117,7 +104,7 @@ void loop()
 		}
 		else
 		{
-			LOG_PRINTFLN("Connected to MQTT broker connected");
+			LOG_PRINTFLN("Connected to MQTT broker");
 		}
 		// Start new MQTT connection
 		MqttClient::ConnectResult connectResult;
@@ -126,8 +113,8 @@ void loop()
 			MQTTPacket_connectData options = MQTTPacket_connectData_initializer;
 			options.MQTTVersion = 4;
 			options.clientID.cstring = (char *)MQTT_ID;
-			options.username.cstring = (char *)br_config.mf_thing_id;
-			options.password.cstring = (char *)br_config.mf_thing_pass;
+			options.username.cstring = (char *)brConfig.mfThingId;
+			options.password.cstring = (char *)brConfig.mfThingPass;
 			options.cleansession = true;
 			options.keepAliveInterval = 15; // 15 seconds
 			MqttClient::Error::type rc = mqtt->connect(options, connectResult);
@@ -137,21 +124,21 @@ void loop()
 				return;
 			}
 		}
-		// {	//Subscribe
-		// 	MqttClient::Error::type rc = mqtt->subscribe(
-		// 		br_config.mf_topic, MqttClient::QOS0, processMessage);
-		// 	if (rc != MqttClient::Error::SUCCESS)
-		// 	{
-		// 		LOG_PRINTFLN("Subscribe error: %i", rc);
-		// 		LOG_PRINTFLN("Drop connection");
-		// 		mqtt->disconnect();
-		// 		return;
-		// 	}
-		// }
+		{ // Subscribe
+			MqttClient::Error::type rc = mqtt->subscribe(
+				brConfig.mfTopic, MqttClient::QOS0, processMessage);
+			if (rc != MqttClient::Error::SUCCESS)
+			{
+				LOG_PRINTFLN("Subscribe error: %i", rc);
+				LOG_PRINTFLN("Drop connection");
+				mqtt->disconnect();
+				return;
+			}
+		}
 	}
 	else
 	{
-		{   // Publish
+		{ // Publish
 			const char *buf = "{'message': 'hello'}";
 			MqttClient::Message message;
 			message.qos = MqttClient::QOS0;
@@ -159,7 +146,7 @@ void loop()
 			message.dup = false;
 			message.payload = (void *)buf;
 			message.payloadLen = strlen(buf);
-			MqttClient::Error::type rc = mqtt->publish(br_config.mf_topic, message);
+			MqttClient::Error::type rc = mqtt->publish(brConfig.mfTopic, message);
 			if (rc != MqttClient::Error::SUCCESS)
 			{
 				LOG_PRINTFLN("Publish error: %i", rc);
@@ -167,6 +154,8 @@ void loop()
 			else
 			{
 				LOG_PRINTFLN("Publish success");
+				digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+				messageCount += 1;
 			}
 		}
 		// Idle for 30 seconds
