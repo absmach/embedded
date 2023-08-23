@@ -24,7 +24,14 @@
 
 #define CLIENT_ID "ESP32"
 
-static const char *TAG = "MQTT_MAINFLUX";
+static const char *TAG = "MQTTS_MAINFLUX";
+
+extern const uint8_t client_cert_pem_start[] asm("_binary_client_crt_start");
+extern const uint8_t client_cert_pem_end[] asm("_binary_client_crt_end");
+extern const uint8_t client_key_pem_start[] asm("_binary_client_key_start");
+extern const uint8_t client_key_pem_end[] asm("_binary_client_key_end");
+extern const uint8_t server_cert_pem_start[] asm("_binary_mainflux_crt_start");
+extern const uint8_t server_cert_pem_end[] asm("_binaty_mainflux_crt_end");
 
 static void log_error_if_nonzero(const char *message, int error_code)
 {
@@ -98,9 +105,12 @@ static void mqtt_app_start(void)
 {
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = server,
+        .broker.verification.certificate = (const char *)server_cert_pem_start,
         .credentials.client_id = CLIENT_ID,
         .credentials.username = mfThingId,
         .credentials.authentication.password = mfThingPass,
+        .credentials.authentication.certificate = (const char*)client_cert_pem_start,
+        .credentials.authentication.key = (const char*) client_key_pem_start,
     };
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
     esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
@@ -125,7 +135,7 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    // Run main application
+    // Run main task
     wifi_init_softap();
     mqtt_app_start();
 }
