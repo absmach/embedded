@@ -1,4 +1,4 @@
-/*****
+/**
 Implements a network interface fpr the esp.
 Current interface is wifi.
 **/
@@ -28,7 +28,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
-// Wi-fi initial
+// Wifi initial
 void wifi_init_softap(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());

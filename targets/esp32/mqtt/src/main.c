@@ -107,7 +107,7 @@ static void mqtt_app_start(void)
     esp_mqtt_client_start(client);
 }
 
-// main app called by rtos
+// Main app called by rtos
 void app_main(void)
 {
     // Defualt start up logs for ESP -IDF
@@ -126,6 +126,6 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     // Run main application
-    wifi_init_softap();
+    ESP_ERROR_CHECK(wifi_init_softap());
     mqtt_app_start();
 }
