@@ -23,11 +23,3 @@ Thank you for your interest in Mainflux and the desire to contribute!
 ## License
 
 [Apache-2.0](LICENSE)
-
-[gitter]: https://gitter.im/mainflux/mainflux?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge
-[gitter-badge]: https://badges.gitter.im/Join%20Chat.svg
-[license]: https://img.shields.io/badge/license-Apache%20v2.0-blue.svg
-[blog]: https://medium.com/mainflux-iot-platform
-[twitter]: https://twitter.com/mainflux
-[docs]: https://docs.mainflux.io
-[build]: https://github.com/mainflux/docs/actions/workflows/main.yaml/badge.svg
