@@ -32,4 +32,3 @@ void netDisconnect(Network *);
 void netClear(void);
 
 #endif
-

@@ -1,6 +1,10 @@
 #include "main.h"
 #include "MQTTClientapp.h"
 
+#define MESSAGE_DELAY 1000
+#define OS_DELAY 100
+#define KEEP_ALIVE_INT 60
+
 void createMainfluxChannel(void)
 {
     const char *_preId = "channels/";
@@ -18,12 +22,12 @@ void mqttClientSubTask(void const *argument)
         {
             MQTTDisconnect(&mqttClient);
             mqttConnectBroker();
-            osDelay(1000);
+            osDelay(MESSAGE_DELAY);
         }
         else
         {
-            MQTTYield(&mqttClient, 1000);
-            osDelay(100);
+            MQTTYield(&mqttClient, MESSAGE_DELAY);
+            osDelay(OS_DELAY);
         }
     }
 }
@@ -65,7 +69,7 @@ int mqttConnectBroker()
         return -1;
     }
 
-    MQTTClientInit(&mqttClient, &net, 1000, sndBuffer, sizeof(sndBuffer), rcvBuffer, sizeof(rcvBuffer));
+    MQTTClientInit(&mqttClient, &net, MESSAGE_DELAY, sndBuffer, sizeof(sndBuffer), rcvBuffer, sizeof(rcvBuffer));
     createMainfluxChannel();
 
     MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
@@ -74,7 +78,7 @@ int mqttConnectBroker()
     data.clientID.cstring = "STM32F4";
     data.username.cstring = mfThingId;
     data.password.cstring = mfThingPass;
-    data.keepAliveInterval = 60;
+    data.keepAliveInterval = KEEP_ALIVE_INT;
     data.cleansession = 1;
 
     ret = MQTTConnect(&mqttClient, &data);
