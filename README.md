@@ -9,5 +9,4 @@ The build instructions for each of the targets can be found in the [targets](/ta
 - [Twitter](https://twitter.com/mainflux)
 
 ## License
-
 [Apache-2.0](LICENSE)
