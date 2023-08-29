@@ -2,7 +2,7 @@
 #define CONFIG_H
 
 const char *mfThingId = " ";
-const char *mfThingPass = " ";
+const char *mfThingKey = " ";
 const char *mfChannelId = " ";
 char mfTopic[150];
 
