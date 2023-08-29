@@ -1,18 +1,12 @@
-all:
-	platformio -f  run
+define platformio
+	platformio -f run --target $(1)
+endef
 
-upload:
-	platformio -f  run --target upload
+run-%:
+	$(call platformio,$*)
 
-clean:
-	platformio -f  run --target clean
-
-program:
-	platformio -f  run --target program
-
-uploadfs:
-	platformio -f  run --target uploadfs
-
-update:
-	platformio -f  update
-	
+upload: run-upload
+clean: run-clean
+program: run-program
+uploadfs:run-uploadfs
+update: run-update
