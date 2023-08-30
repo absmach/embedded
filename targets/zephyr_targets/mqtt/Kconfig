@@ -1,9 +1,4 @@
-# Config options for mqtt_publisher sample application
-
-# Copyright (c) 2020 Intel Corporation
-# SPDX-License-Identifier: Apache-2.0
-
-mainmenu "Networking mqtt_publisher sample application"
+mainmenu "Mqtt application"
 
 config NET_SAMPLE_APP_MAX_ITERATIONS
 	int "Number of times to Publish sample MQTT messages"
