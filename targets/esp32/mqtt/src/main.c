@@ -33,7 +33,7 @@ static void log_error_if_nonzero(const char *message, int error_code)
         ESP_LOGE(TAG, "Last error %s: 0x%x", message, error_code);
     }
 }
-void create_mainflux_topic(void)
+void format_mainflux_message_topic(void)
 {
     const char *_preId = "channels/";
     const char *_postId = "/messages";
@@ -48,7 +48,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     esp_mqtt_event_handle_t event = event_data;
     esp_mqtt_client_handle_t client = event->client;
     int msg_id;
-    create_mainflux_topic();
+    format_mainflux_message_topic();
     switch ((esp_mqtt_event_id_t)event_id)
     {
     case MQTT_EVENT_CONNECTED:
