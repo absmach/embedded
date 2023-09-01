@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20.0)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(aws_iot_mqtt)
+project(mqtts)
 
 if(USE_DUMMY_CREDS)
   set(creds "src/creds/dummy.c")
