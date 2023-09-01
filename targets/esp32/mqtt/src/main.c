@@ -22,8 +22,6 @@
 #include "cnetwork.h"
 #include "config.h"
 
-#define CLIENT_ID "ESP32"
-
 static const char *TAG = "MQTT_MAINFLUX";
 
 static void log_error_if_nonzero(const char *message, int error_code)
@@ -44,7 +42,6 @@ void format_mainflux_message_topic(void)
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
-    ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%" PRIi32 "", base, event_id);
     esp_mqtt_event_handle_t event = event_data;
     esp_mqtt_client_handle_t client = event->client;
     int msg_id;
