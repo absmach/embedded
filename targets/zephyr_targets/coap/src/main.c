@@ -17,13 +17,11 @@ LOG_MODULE_REGISTER(net_coap_client_sample, LOG_LEVEL_DBG);
 #define PEER_PORT 5683
 #define MAX_COAP_MSG_LEN 256
 
-/* CoAP socket fd */
 static int sock;
 
 struct pollfd fds[1];
 static int nfds;
 
-/* CoAP Options */
 static const char * const test_path[] = { "test", NULL };
 
 static const char * const large_path[] = { "large", NULL };
@@ -195,7 +193,6 @@ static int send_simple_coap_msgs_and_wait_for_reply(void)
 	while (1) {
 		switch (test_type) {
 		case 0:
-			/* Test CoAP GET method */
 			printk("\nCoAP client GET\n");
 			r = send_simple_coap_request(COAP_METHOD_GET);
 			if (r < 0) {
@@ -204,7 +201,6 @@ static int send_simple_coap_msgs_and_wait_for_reply(void)
 
 			break;
 		case 1:
-			/* Test CoAP PUT method */
 			printk("\nCoAP client PUT\n");
 			r = send_simple_coap_request(COAP_METHOD_PUT);
 			if (r < 0) {
@@ -213,7 +209,6 @@ static int send_simple_coap_msgs_and_wait_for_reply(void)
 
 			break;
 		case 2:
-			/* Test CoAP POST method*/
 			printk("\nCoAP client POST\n");
 			r = send_simple_coap_request(COAP_METHOD_POST);
 			if (r < 0) {
@@ -222,7 +217,6 @@ static int send_simple_coap_msgs_and_wait_for_reply(void)
 
 			break;
 		case 3:
-			/* Test CoAP DELETE method*/
 			printk("\nCoAP client DELETE\n");
 			r = send_simple_coap_request(COAP_METHOD_DELETE);
 			if (r < 0) {
@@ -359,7 +353,6 @@ static int get_large_coap_msgs(void)
 	int r;
 
 	while (1) {
-		/* Test CoAP Large GET method */
 		printk("\nCoAP client Large GET (block %zd)\n",
 		       blk_ctx.current / 64 /*COAP_BLOCK_64*/);
 		r = send_large_coap_request();
@@ -371,8 +364,6 @@ static int get_large_coap_msgs(void)
 		if (r < 0) {
 			return r;
 		}
-
-		/* Received last block */
 		if (r == 1) {
 			memset(&blk_ctx, 0, sizeof(blk_ctx));
 			return 0;
