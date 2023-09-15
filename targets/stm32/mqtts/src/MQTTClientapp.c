@@ -46,7 +46,7 @@ void mqttClientPubTask(void const *argument)
 
             MQTTPublish(&mqttClient, mfTopic, &message);
         }
-        osDelay(1000);
+        osDelay(MESSAGE_DELAY);
     }
 }
 
@@ -59,14 +59,14 @@ int mqttConnectBroker()
     if (ret != MQTT_SUCCESS)
     {
         printf("net_init failed.\n");
-        return -1;
+        return ERR_CODE;
     }
 
     ret = net_connect(&net, server, MQTT_PORT);
     if (ret != MQTT_SUCCESS)
     {
         printf("net_connect failed.\n");
-        return -1;
+        return ERR_CODE;
     }
 
     MQTTClientInit(&mqttClient, &net, MESSAGE_DELAY, sndBuffer, sizeof(sndBuffer), rcvBuffer, sizeof(rcvBuffer));

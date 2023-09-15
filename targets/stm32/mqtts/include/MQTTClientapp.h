@@ -10,6 +10,7 @@
 
 #define MQTT_PORT 1883
 #define MQTT_BUFSIZE 1024
+#define ERR_CODE -1
 
 Network net;
 MQTTClient mqttClient;
