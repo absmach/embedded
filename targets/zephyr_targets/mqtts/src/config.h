@@ -12,11 +12,12 @@
 #define BACKOFF_EXP_MAX_MS 60000u
 #define BACKOFF_CONST_MS 5000u
 #define KEEP_ALIVE 60
+#define TOPIC_BUFFER_SIZE 128
 
 const char *mfThingId = " ";
 const char *mfThingKey = " ";
 const char *mfChannelId = " ";
-char mfTopic[150];
+char mfTopic[TOPIC_BUFFER_SIZE];
 
 const char *brokername = ""
 
