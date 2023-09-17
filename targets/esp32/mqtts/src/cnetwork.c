@@ -1,5 +1,5 @@
-/*****
-Implements a network interface fpr the esp.
+/**
+Implements a network interface for the esp.
 Current interface is wifi.
 **/
 
@@ -8,9 +8,9 @@ Current interface is wifi.
 #define ESP_WIFI_SSID " " // Enter the wifi ssid
 #define ESP_WIFI_PASS " " // Enter the wifi password
 
-static const char *TAG = "wifi softAP"; // tag for esp logging
+static const char *TAG = "wifi softAP"; // Tag for esp logging
 
-// Wifi event handler
+// Wi-Fi event handler
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
@@ -28,7 +28,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
-// Wi-Fi initial
+// Wi-Fi init
 void wifi_init_softap(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());

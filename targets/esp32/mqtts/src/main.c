@@ -117,14 +117,14 @@ static void mqtt_app_start(void)
     esp_mqtt_client_start(client);
 }
 
-// main app called by rtos
+// Main app 
 void app_main(void)
 {
-    // Defualt start up logs for ESP -IDF
+    // Default start up logs for ESP-IDF
     ESP_LOGI(TAG, "[APP] Startup..");
     ESP_LOGI(TAG, "[APP] Free memory: %" PRIu32 " bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
-    // set log level
+    // Set log level
     esp_log_level_set("*", ESP_LOG_INFO);
     esp_log_level_set("mqtt_client", ESP_LOG_VERBOSE);
     esp_log_level_set("TRANSPORT_BASE", ESP_LOG_VERBOSE);
