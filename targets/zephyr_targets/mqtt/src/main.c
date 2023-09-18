@@ -14,6 +14,9 @@ K_APPMEM_PARTITION_DEFINE(app_partition);
 struct k_mem_domain app_domain;
 #define APP_BMEM K_APP_BMEM(app_partition)
 #define APP_DMEM K_APP_DMEM(app_partition)
+#define SUCCESS_OR_EXIT(rc) success_or_exit(rc)
+#define SUCCESS_OR_BREAK(rc) success_or_break(rc)
+#define PROG_DELAY 5000
 
 LOG_MODULE_REGISTER(mqtt, LOG_LEVEL_DBG);
 
@@ -290,20 +293,21 @@ static int process_mqtt_and_sleep(struct mqtt_client *client, int timeout)
 	return 0;
 }
 
-#define SUCCESS_OR_EXIT(rc) \
-	{                       \
-		if (rc != 0)        \
-		{                   \
-			return 1;       \
-		}                   \
+int success_or_exit(rc)
+{
+	if (rc != 0)
+	{
+		return 1;
 	}
-#define SUCCESS_OR_BREAK(rc) \
-	{                        \
-		if (rc != 0)         \
-		{                    \
-			break;           \
-		}                    \
+}
+
+void success_or_break(rc)
+{
+	if (rc != 0)
+	{
+		break;
 	}
+}
 
 static int publisher(void)
 {
@@ -369,7 +373,7 @@ static int start_app(void)
 
 		if (!CONFIG_NET_SAMPLE_APP_MAX_CONNECTIONS)
 		{
-			k_sleep(K_MSEC(5000));
+			k_sleep(K_MSEC(PROG_DELAY));
 		}
 	}
 
