@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdbool.h>
 
 #include "MQTTInterface.h"
 #include "stm32f4xx_hal.h"
@@ -22,6 +23,7 @@
 
 #define SERVER_PORT "8883"
 #define DEBUG_LEVEL 1
+#define PROG_DELAY 1000
 
 const char mbedtls_root_certificate[] = ""; // Add root certificate.
 
@@ -71,7 +73,7 @@ int net_init(Network *n)
 	if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers,
 									 strlen(pers))) != 0)
 	{
-		return -1;
+		return ERR_CODE;
 	}
 
 	// Register functions
@@ -92,7 +94,7 @@ int netConnect(Network *n, char *ip, int port)
 	if (ret < 0)
 	{
 		printf("mbedtls_x509_crt_parse failed.\n");
-		return -1;
+		return ERR_CODE;
 	}
 
 	ret = mbedtls_net_connect(&server_fd, server, SERVER_PORT,
@@ -100,7 +102,7 @@ int netConnect(Network *n, char *ip, int port)
 	if (ret < 0)
 	{
 		printf("mbedtls_net_connect failed.\n");
-		return -1;
+		return ERR_CODE;
 	}
 
 	ret = mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT,
@@ -108,7 +110,7 @@ int netConnect(Network *n, char *ip, int port)
 	if (ret < 0)
 	{
 		printf("mbedtls_ssl_config_defaults failed.\n");
-		return -1;
+		return ERR_CODE;
 	}
 
 	mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
@@ -120,14 +122,14 @@ int netConnect(Network *n, char *ip, int port)
 	if (ret < 0)
 	{
 		printf("mbedtls_ssl_setup failed.\n");
-		return -1;
+		return ERR_CODE;
 	}
 
 	ret = mbedtls_ssl_set_hostname(&ssl, SERVER_NAME);
 	if (ret < 0)
 	{
 		printf("mbedtls_ssl_set_hostname failed.\n");
-		return -1;
+		return ERR_CODE;
 	}
 
 	mbedtls_ssl_set_bio(&ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv,
@@ -138,7 +140,7 @@ int netConnect(Network *n, char *ip, int port)
 		if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE)
 		{
 			printf("mbedtls_ssl_handshake failed.\n");
-			return -1;
+			return ERR_CODE;
 		}
 	}
 
@@ -146,7 +148,7 @@ int netConnect(Network *n, char *ip, int port)
 	if (ret < 0)
 	{
 		printf("mbedtls_ssl_get_verify_result failed.\n");
-		return -1;
+		return ERR_CODE;
 	}
 
 	return 0;
@@ -156,8 +158,8 @@ int netRead(Network *n, unsigned char *buffer, int len, int timeout_ms)
 {
 	int ret;
 	int received = 0;
-	int error = 0;
-	int complete = 0;
+	bool error = false;
+	bool complete = false;
 
 	// Set timeout
 	if (timeout_ms != 0)
@@ -174,11 +176,11 @@ int netRead(Network *n, unsigned char *buffer, int len, int timeout_ms)
 		}
 		else if (ret != MBEDTLS_ERR_SSL_WANT_READ)
 		{
-			error = 1;
+			error = true;
 		}
 		if (received >= len)
 		{
-			complete = 1;
+			complete = true;
 		}
 	} while (!error && !complete);
 
@@ -247,7 +249,7 @@ void timerCountdownMS(Timer *timer, unsigned int timeout)
 
 void timerCountdown(Timer *timer, unsigned int timeout)
 {
-	timer->end_time = MilliTimer + (timeout * 1000);
+	timer->end_time = MilliTimer + (timeout * PROG_DELAY);
 }
 
 int timerLeftMS(Timer *timer)

@@ -73,13 +73,13 @@ int mqttConnectBroker()
     createMainfluxChannel();
 
     MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
-    data.willFlag = 0;
-    data.MQTTVersion = 3;
-    data.clientID.cstring = "STM32F4";
+    data.willFlag = MQTT_WILL_FLAG;
+    data.MQTTVersion = MQTT_VERSION;
+    data.clientID.cstring = CLIENTID;
     data.username.cstring = mfThingId;
     data.password.cstring = mfThingPass;
     data.keepAliveInterval = KEEP_ALIVE_INT;
-    data.cleansession = 1;
+    data.cleansession = MQTT_CLEAN_SESSION;
 
     ret = MQTTConnect(&mqttClient, &data);
     if (ret != MQTT_SUCCESS)
