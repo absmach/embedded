@@ -8,7 +8,7 @@
 #include <zephyr/net/sntp.h>
 #include <zephyr/net/tls_credentials.h>
 #include <zephyr/data/json.h>
-#include <zephyr/random/rand32.h>
+#include <zephyr/random/random.h>
 #include <zephyr/posix/time.h>
 #include <zephyr/logging/log.h>
 #include <mbedtls/memory_buffer_alloc.h>
@@ -17,17 +17,14 @@
 #include "dhcp.h"
 #include "config.h"
 
-LOG_MODULE_REGISTER(aws, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(mqtt, LOG_LEVEL_DBG);
 
 static struct sockaddr_in mfbroker;
 
 static uint8_t rx_buffer[MQTT_BUFFER_SIZE];
 static uint8_t tx_buffer[MQTT_BUFFER_SIZE];
 static uint8_t buffer[APP_BUFFER_SIZE];
-/
-
-	static struct mqtt_client client_ctx;
-
+static struct mqtt_client client_ctx;
 static uint32_t messages_received_counter;
 static bool do_publish;
 static bool do_subscribe;
@@ -451,7 +448,7 @@ static int resolve_broker_addr(struct sockaddr_in *broker)
 		.ai_protocol = 0,
 	};
 
-	ret = zsock_getaddrinfo(CONFIG_AWS_ENDPOINT, AWS_BROKER_PORT, &hints, &ai);
+	ret = zsock_getaddrinfo(BROKER, BROKER_PORT, &hints, &ai);
 	if (ret == 0)
 	{
 		char addr_str[INET_ADDRSTRLEN];

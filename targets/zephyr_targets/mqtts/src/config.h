@@ -2,7 +2,7 @@
 #define CONFIG_H
 
 #define MQTT_CLIENTID ""
-#define SNTP_SERVER "0.pool.ntp.org
+#define SNTP_SERVER "0.pool.ntp.org"
 #define BROKER ""
 #define BROKER_PORT "8883"
 #define MQTT_BUFFER_SIZE 256u
