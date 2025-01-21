@@ -14,10 +14,10 @@
 #define KEEP_ALIVE 60
 #define TOPIC_BUFFER_SIZE 128
 
-const char *mfThingId = " ";
-const char *mfThingKey = " ";
-const char *mfChannelId = " ";
-char mfTopic[TOPIC_BUFFER_SIZE];
+const char *mgThingId = " ";
+const char *mgThingKey = " ";
+const char *mgChannelId = " ";
+char mgTopic[TOPIC_BUFFER_SIZE];
 
 const char *brokername = ""
 

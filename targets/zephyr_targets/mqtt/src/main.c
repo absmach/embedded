@@ -159,10 +159,10 @@ static char *get_mqtt_topic(void)
 {
 	const char *_preId = "channels/";
 	const char *_postId = "/messages";
-	strcpy(mfTopic, _preId);
-	strcat(mfTopic, mfChannelId);
-	strcat(mfTopic, _postId);
-	return mfTopic;
+	strcpy(mgTopic, _preId);
+	strcat(mgTopic, mgChannelId);
+	strcat(mgTopic, _postId);
+	return mgTopic;
 }
 
 static int publish(struct mqtt_client *client, enum mqtt_qos qos)
@@ -208,8 +208,8 @@ static void client_init(struct mqtt_client *client)
 	client->evt_cb = mqtt_evt_handler;
 	client->client_id.utf8 = (uint8_t *)MQTT_CLIENTID;
 	client->client_id.size = strlen(MQTT_CLIENTID);
-	client->password = mfThingKey;
-	client->user_name = mfThingId;
+	client->password = mgThingKey;
+	client->user_name = mgThingId;
 	client->protocol_version = MQTT_VERSION_3_1_1;
 
 	/* MQTT buffers configuration */

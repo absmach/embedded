@@ -29,7 +29,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 }
 
 // Wifi initial
-void wifi_init_softap(void)
+esp_err_t wifi_init_softap(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -66,4 +66,6 @@ void wifi_init_softap(void)
 
     ESP_LOGI(TAG, "wifi_init_softap finished. SSID:%s password:%s",
              ESP_WIFI_SSID, ESP_WIFI_PASS); // Success log
+
+    return ESP_OK;
 }
