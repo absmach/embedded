@@ -7,7 +7,8 @@
 #include <zephyr/net/mqtt.h>
 #include <zephyr/random/random.h>
 #include <zephyr/app_memory/app_memdomain.h>
-
+#include <zephyr/net/wifi_mgmt.h>
+#include <zephyr/net/net_event.h>
 #include "config.h"
 
 K_APPMEM_PARTITION_DEFINE(app_partition);
@@ -21,7 +22,9 @@ K_APPMEM_PARTITION_DEFINE(app_partition);
 #define APP_CONNECT_TRIES 3
 #define APP_CONNECT_TIMEOUT_MS 1000
 #define APP_SLEEP_MSECS 1000
-#define MQTT_CLIENTID "your_client_id_here"  // Replace with your actual client ID
+#define MQTT_CLIENTID "your_client_id_here" // Replace with your actual client ID
+#define WIFI_SSID "internal"
+#define WIFI_PSK "$$Osiepna2024"
 
 LOG_MODULE_REGISTER(mqtt, LOG_LEVEL_DBG);
 
@@ -387,8 +390,72 @@ static int start_app(void)
 	return r;
 }
 
+static void wifi_connect(void)
+{
+	struct net_if *iface = net_if_get_default();
+	static struct wifi_connect_req_params wifi_params = {
+		.ssid = WIFI_SSID,
+		.ssid_length = 0, // Will be calculated
+		.psk = WIFI_PSK,
+		.psk_length = 0, // Will be calculated
+		.channel = WIFI_CHANNEL_ANY,
+		.security = WIFI_SECURITY_TYPE_PSK,
+	};
+
+	// Calculate SSID and PSK lengths
+	wifi_params.ssid_length = strlen(wifi_params.ssid);
+	wifi_params.psk_length = strlen(wifi_params.psk);
+
+	LOG_INF("Connecting to SSID: %s...", wifi_params.ssid);
+
+	if (net_mgmt(NET_REQUEST_WIFI_CONNECT, iface,
+				 &wifi_params, sizeof(struct wifi_connect_req_params)))
+	{
+		LOG_ERR("Failed to request Wi-Fi connection");
+		return;
+	}
+}
+
+static void wifi_mgmt_event_handler(struct net_mgmt_event_callback *cb,
+									uint32_t mgmt_event,
+									struct net_if *iface)
+{
+	switch (mgmt_event)
+	{
+	case NET_EVENT_WIFI_CONNECT_RESULT:
+		LOG_INF("Wi-Fi connected!");
+		break;
+	case NET_EVENT_WIFI_DISCONNECT_RESULT:
+		LOG_INF("Wi-Fi disconnected - reconnecting...");
+		wifi_connect();
+		break;
+	}
+}
+
+static struct net_mgmt_event_callback wifi_cb;
+
+static void setup_wifi(void)
+{
+	net_mgmt_init_event_callback(&wifi_cb,
+								 wifi_mgmt_event_handler,
+								 (NET_EVENT_WIFI_CONNECT_RESULT |
+								  NET_EVENT_WIFI_DISCONNECT_RESULT));
+	net_mgmt_add_event_callback(&wifi_cb);
+}
+
 int main(void)
 {
+	LOG_INF("Starting Wi-Fi connection...");
+	setup_wifi();
+	wifi_connect();
+
+	struct net_if *iface = net_if_get_default();
+	if (!iface)
+	{
+		LOG_ERR("No default network interface found!");
+		return -1;
+	}
+
 	exit(start_app());
 	return 0;
 }
