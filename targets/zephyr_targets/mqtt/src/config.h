@@ -8,6 +8,6 @@ const char *mfThingKey = " ";
 const char *mfChannelId = " ";
 char mfTopic[150];
 
-const char *server = " ";
+const char *server = "";
 
 #endif
