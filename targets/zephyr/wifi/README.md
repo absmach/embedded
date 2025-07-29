@@ -1,8 +1,7 @@
  WiFi- M0 (ESP32C6) target
 ## Requirements
-1. Mainflux broker details including: hostname, ThingID, Thing Credentials and Channel ID
+1. Magistrala broker details including: hostname, ThingID, Thing Credentials, CLilent ID, Client Credentials and Channel ID
 2. [Zephyr](https://www.zephyrproject.org/)
-
 
 ## Configure
 1. Edit the [config file](/config.h) with your WiFi AP/STA details.

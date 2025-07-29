@@ -18,5 +18,4 @@
 #define WIFI_SSID "SSID"     /* Replace `SSID` with WiFi ssid. */
 #define WIFI_PSK  "PASSWORD" /* Replace `PASSWORD` with Router password. */
 
-
 #endif
