@@ -8,7 +8,7 @@
 #include <zephyr/net/sntp.h>
 #include <zephyr/net/tls_credentials.h>
 #include <zephyr/data/json.h>
-#include <zephyr/random/rand32.h>
+#include <zephyr/random/random.h>
 #include <zephyr/posix/time.h>
 #include <zephyr/logging/log.h>
 #include <mbedtls/memory_buffer_alloc.h>
@@ -17,17 +17,14 @@
 #include "dhcp.h"
 #include "config.h"
 
-LOG_MODULE_REGISTER(aws, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(mqtt, LOG_LEVEL_DBG);
 
-static struct sockaddr_in mfbroker;
+static struct sockaddr_in mgbroker;
 
 static uint8_t rx_buffer[MQTT_BUFFER_SIZE];
 static uint8_t tx_buffer[MQTT_BUFFER_SIZE];
 static uint8_t buffer[APP_BUFFER_SIZE];
-/
-
-	static struct mqtt_client client_ctx;
-
+static struct mqtt_client client_ctx;
 static uint32_t messages_received_counter;
 static bool do_publish;
 static bool do_subscribe;
@@ -77,8 +74,8 @@ static int subscribe_topic(void)
 {
 	int ret;
 	struct mqtt_topic topics[] = {{
-		.topic = {.utf8 = mfTopic,
-				  .size = strlen(mfTopic)},
+		.topic = {.utf8 = mgTopic,
+				  .size = strlen(mgTopic)},
 		.qos = 0,
 	}};
 	const struct mqtt_subscription_list sub_list = {
@@ -242,13 +239,13 @@ static void client_setup(void)
 {
 	mqtt_client_init(&client_ctx);
 
-	client_ctx.broker = &mfbroker;
+	client_ctx.broker = &mgbroker;
 	client_ctx.evt_cb = mqtt_event_cb;
 
 	client_ctx.client_id.utf8 = (uint8_t *)MQTT_CLIENTID;
 	client_ctx.client_id.size = sizeof(MQTT_CLIENTID) - 1;
-	client_ctx.password = mfThingKey;
-	client_ctx.user_name = mfThingId;
+	client_ctx.password = mgThingKey;
+	client_ctx.user_name = mgThingId;
 	client_ctx.keepalive = KEEP_ALIVE;
 
 	client_ctx.protocol_version = MQTT_VERSION_3_1_1;
@@ -329,9 +326,9 @@ static void format_mainflux_message_topic(void)
 {
 	const char *_preId = "channels/";
 	const char *_postId = "/messages";
-	strcpy(mfTopic, _preId);
-	strcat(mfTopic, mfChannelId);
-	strcat(mfTopic, _postId);
+	strcpy(mgTopic, _preId);
+	strcat(mgTopic, mgChannelId);
+	strcat(mgTopic, _postId);
 }
 
 static int publish(void)
@@ -341,7 +338,7 @@ static int publish(void)
 	json_obj_encode_buf(json_descr, ARRAY_SIZE(json_descr), &pl, buffer, sizeof(buffer));
 	format_mainflux_message_topic();
 
-	return publish_message(mfTopic, strlen(mfTopic), buffer,
+	return publish_message(mgTopic, strlen(mgTopic), buffer,
 						   strlen(buffer));
 }
 
@@ -451,7 +448,7 @@ static int resolve_broker_addr(struct sockaddr_in *broker)
 		.ai_protocol = 0,
 	};
 
-	ret = zsock_getaddrinfo(CONFIG_AWS_ENDPOINT, AWS_BROKER_PORT, &hints, &ai);
+	ret = zsock_getaddrinfo(BROKER, BROKER_PORT, &hints, &ai);
 	if (ret == 0)
 	{
 		char addr_str[INET_ADDRSTRLEN];
@@ -478,7 +475,7 @@ int main(void)
 
 	for (;;)
 	{
-		resolve_broker_addr(&mfbroker);
+		resolve_broker_addr(&mgbroker);
 
 		client_loop();
 		k_sleep(K_SECONDS(1));

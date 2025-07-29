@@ -5,18 +5,26 @@
 #include <zephyr/kernel.h>
 #include <zephyr/net/socket.h>
 #include <zephyr/net/mqtt.h>
-#include <zephyr/random/rand32.h>
+#include <zephyr/random/random.h>
 #include <zephyr/app_memory/app_memdomain.h>
-
+#include <zephyr/net/wifi_mgmt.h>
+#include <zephyr/net/net_event.h>
 #include "config.h"
 
 K_APPMEM_PARTITION_DEFINE(app_partition);
-struct k_mem_domain app_domain;
 #define APP_BMEM K_APP_BMEM(app_partition)
 #define APP_DMEM K_APP_DMEM(app_partition)
 #define SUCCESS_OR_EXIT(rc) success_or_exit(rc)
 #define SUCCESS_OR_BREAK(rc) success_or_break(rc)
 #define PROG_DELAY 5000
+#define APP_MQTT_BUFFER_SIZE 1024 // Replace 1024 with the desired buffer size
+#define SERVER_PORT 1883
+#define APP_CONNECT_TRIES 3
+#define APP_CONNECT_TIMEOUT_MS 1000
+#define APP_SLEEP_MSECS 1000
+#define MQTT_CLIENTID "your_client_id_here" // Replace with your actual client ID
+#define WIFI_SSID "internal"
+#define WIFI_PSK "$$Osiepna2024"
 
 LOG_MODULE_REGISTER(mqtt, LOG_LEVEL_DBG);
 
@@ -25,7 +33,7 @@ static APP_BMEM uint8_t tx_buffer[APP_MQTT_BUFFER_SIZE];
 
 static APP_BMEM struct mqtt_client client_ctx;
 
-static APP_BMEM struct sockaddr_storage server;
+static APP_BMEM struct sockaddr_storage broker_addr;
 
 static APP_BMEM struct zsock_pollfd fds[1];
 static APP_BMEM int nfds;
@@ -154,10 +162,10 @@ static char *get_mqtt_topic(void)
 {
 	const char *_preId = "channels/";
 	const char *_postId = "/messages";
-	strcpy(mfTopic, _preId);
-	strcat(mfTopic, mfChannelId);
-	strcat(mfTopic, _postId);
-	return mfTopic;
+	strcpy(mgTopic, _preId);
+	strcat(mgTopic, mgChannelId);
+	strcat(mgTopic, _postId);
+	return mgTopic;
 }
 
 static int publish(struct mqtt_client *client, enum mqtt_qos qos)
@@ -185,7 +193,7 @@ static int publish(struct mqtt_client *client, enum mqtt_qos qos)
 
 static void broker_init(void)
 {
-	struct sockaddr_in *broker4 = (struct sockaddr_in *)&server;
+	struct sockaddr_in *broker4 = (struct sockaddr_in *)&broker_addr;
 
 	broker4->sin_family = AF_INET;
 	broker4->sin_port = htons(SERVER_PORT);
@@ -199,12 +207,12 @@ static void client_init(struct mqtt_client *client)
 	broker_init();
 
 	/* MQTT client configuration */
-	client->broker = &server;
+	client->broker = &broker_addr;
 	client->evt_cb = mqtt_evt_handler;
 	client->client_id.utf8 = (uint8_t *)MQTT_CLIENTID;
 	client->client_id.size = strlen(MQTT_CLIENTID);
-	client->password = mfThingKey;
-	client->user_name = mfThingId;
+	client->password = mgThingKey;
+	client->user_name = mgThingId;
 	client->protocol_version = MQTT_VERSION_3_1_1;
 
 	/* MQTT buffers configuration */
@@ -293,19 +301,21 @@ static int process_mqtt_and_sleep(struct mqtt_client *client, int timeout)
 	return 0;
 }
 
-int success_or_exit(rc)
+int success_or_exit(int rc)
 {
 	if (rc != 0)
 	{
 		return 1;
 	}
+
+	return 0;
 }
 
-void success_or_break(rc)
+void success_or_break(int rc)
 {
 	if (rc != 0)
 	{
-		break;
+		return;
 	}
 }
 
@@ -380,8 +390,72 @@ static int start_app(void)
 	return r;
 }
 
+static void wifi_connect(void)
+{
+	struct net_if *iface = net_if_get_default();
+	static struct wifi_connect_req_params wifi_params = {
+		.ssid = WIFI_SSID,
+		.ssid_length = 0, // Will be calculated
+		.psk = WIFI_PSK,
+		.psk_length = 0, // Will be calculated
+		.channel = WIFI_CHANNEL_ANY,
+		.security = WIFI_SECURITY_TYPE_PSK,
+	};
+
+	// Calculate SSID and PSK lengths
+	wifi_params.ssid_length = strlen(wifi_params.ssid);
+	wifi_params.psk_length = strlen(wifi_params.psk);
+
+	LOG_INF("Connecting to SSID: %s...", wifi_params.ssid);
+
+	if (net_mgmt(NET_REQUEST_WIFI_CONNECT, iface,
+				 &wifi_params, sizeof(struct wifi_connect_req_params)))
+	{
+		LOG_ERR("Failed to request Wi-Fi connection");
+		return;
+	}
+}
+
+static void wifi_mgmt_event_handler(struct net_mgmt_event_callback *cb,
+									uint32_t mgmt_event,
+									struct net_if *iface)
+{
+	switch (mgmt_event)
+	{
+	case NET_EVENT_WIFI_CONNECT_RESULT:
+		LOG_INF("Wi-Fi connected!");
+		break;
+	case NET_EVENT_WIFI_DISCONNECT_RESULT:
+		LOG_INF("Wi-Fi disconnected - reconnecting...");
+		wifi_connect();
+		break;
+	}
+}
+
+static struct net_mgmt_event_callback wifi_cb;
+
+static void setup_wifi(void)
+{
+	net_mgmt_init_event_callback(&wifi_cb,
+								 wifi_mgmt_event_handler,
+								 (NET_EVENT_WIFI_CONNECT_RESULT |
+								  NET_EVENT_WIFI_DISCONNECT_RESULT));
+	net_mgmt_add_event_callback(&wifi_cb);
+}
+
 int main(void)
 {
+	LOG_INF("Starting Wi-Fi connection...");
+	setup_wifi();
+	wifi_connect();
+
+	struct net_if *iface = net_if_get_default();
+	if (!iface)
+	{
+		LOG_ERR("No default network interface found!");
+		return -1;
+	}
+
 	exit(start_app());
 	return 0;
 }

@@ -2,7 +2,7 @@
 #define CONFIG_H
 
 #define MQTT_CLIENTID ""
-#define SNTP_SERVER "0.pool.ntp.org
+#define SNTP_SERVER "0.pool.ntp.org"
 #define BROKER ""
 #define BROKER_PORT "8883"
 #define MQTT_BUFFER_SIZE 256u
@@ -14,10 +14,10 @@
 #define KEEP_ALIVE 60
 #define TOPIC_BUFFER_SIZE 128
 
-const char *mfThingId = " ";
-const char *mfThingKey = " ";
-const char *mfChannelId = " ";
-char mfTopic[TOPIC_BUFFER_SIZE];
+const char *mgThingId = " ";
+const char *mgThingKey = " ";
+const char *mgChannelId = " ";
+char mgTopic[TOPIC_BUFFER_SIZE];
 
 const char *brokername = ""
 

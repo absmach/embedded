@@ -22,7 +22,9 @@
 #include "cnetwork.h"
 #include "config.h"
 
-static const char *TAG = "MQTT_MAINFLUX";
+#define CLIENT_ID "ESP32"
+
+static const char *TAG = "MQTT_MAGISTRALA";
 
 static void log_error_if_nonzero(const char *message, int error_code)
 {
@@ -31,6 +33,7 @@ static void log_error_if_nonzero(const char *message, int error_code)
         ESP_LOGE(TAG, "Last error %s: 0x%x", message, error_code);
     }
 }
+
 void format_mainflux_message_topic(void)
 {
     const char *_preId = "channels/";
