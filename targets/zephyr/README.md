@@ -1,6 +1,6 @@
 # Zephyr
 
-This folder contains the Zephyr target configurations for the Absmach project.
+This folder contains the Zephyr target configurations for the [S0](https://absmach.github.io/s0-docs/), IoT Gateway for Wireless and Wired M-Bus Metering.
 
 ## How to use
 
@@ -35,3 +35,4 @@ west espressif monitor
 The following boards are supported by the Zephyr target configurations:
 
 - ESP32 DevKitC WROOM <esp32_devkitc_wroom>
+- ESP32 S3 <esp32s3_devkitc/esp32s3/procpu>
