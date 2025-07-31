@@ -1,652 +1,314 @@
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(net_coap_client_sample, LOG_LEVEL_DBG);
-
-#include <errno.h>
-#include <zephyr/sys/printk.h>
-#include <zephyr/sys/byteorder.h>
 #include <zephyr/kernel.h>
-
-#include <zephyr/net/socket.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/net/net_mgmt.h>
-#include <zephyr/net/net_ip.h>
-#include <zephyr/net/udp.h>
+#include <zephyr/net/socket.h>
+#include <zephyr/net/wifi_mgmt.h>
+
+#include "config.h"
+#include "wifi.h"
 #include <zephyr/net/coap.h>
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/net_ip.h>
+#include <zephyr/net/net_mgmt.h>
+#include <zephyr/net/socket.h>
+#include <zephyr/net/udp.h>
+#include <zephyr/random/random.h>
 
-#include "net_private.h"
+LOG_MODULE_REGISTER(coap_client);
 
-#define PEER_PORT 5683
-#define MAX_COAP_MSG_LEN 256
+static struct net_if *sta_iface;
 
-static int sock;
+/* CoAP client socket */
+static int coap_sock = -1;
+static struct sockaddr_in magistrala_addr;
 
-struct pollfd fds[1];
-static int nfds;
+#define MAX_COAP_MSG_LEN 512
+#define TELEMETRY_INTERVAL_SEC 30
 
-static const char * const test_path[] = { "test", NULL };
+typedef struct {
+  double temperature;
+  double humidity;
+  int battery_level;
+  bool led_state;
+} sensor_data_t;
 
-static const char * const large_path[] = { "large", NULL };
+static sensor_data_t current_data = {.temperature = 23.5,
+                                     .humidity = 65.0,
+                                     .battery_level = 85,
+                                     .led_state = false};
 
-static const char * const obs_path[] = { "obs", NULL };
+static uint16_t message_id = 1;
 
-#define BLOCK_WISE_TRANSFER_SIZE_GET 2048
+/* Network event callback */
+static struct net_mgmt_event_callback mgmt_cb;
+static K_SEM_DEFINE(dhcp_sem, 0, 1);
 
-static struct coap_block_context blk_ctx;
-
-static void wait(void)
-{
-	if (poll(fds, nfds, -1) < 0) {
-		LOG_ERR("Error in poll:%d", errno);
-	}
+static void net_mgmt_event_handler(struct net_mgmt_event_callback *cb,
+                                   uint32_t mgmt_event, struct net_if *iface) {
+  if (mgmt_event == NET_EVENT_IPV4_DHCP_BOUND) {
+    LOG_INF("DHCP bound - got IP address");
+    k_sem_give(&dhcp_sem);
+  }
 }
 
-static void prepare_fds(void)
-{
-	fds[nfds].fd = sock;
-	fds[nfds].events = POLLIN;
-	nfds++;
+static int coap_client_init(void) {
+  int ret;
+
+  /* Create UDP socket */
+  coap_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (coap_sock < 0) {
+    LOG_ERR("Failed to create CoAP socket: %d", errno);
+    return -errno;
+  }
+
+  memset(&magistrala_addr, 0, sizeof(magistrala_addr));
+  magistrala_addr.sin_family = AF_INET;
+  magistrala_addr.sin_port = htons(MAGISTRALA_COAP_PORT);
+
+  ret = inet_pton(AF_INET, MAGISTRALA_IP, &magistrala_addr.sin_addr);
+  if (ret != 1) {
+    LOG_ERR("Invalid IP address: %s", MAGISTRALA_IP);
+    close(coap_sock);
+    return -EINVAL;
+  }
+
+  LOG_INF("Magistrala CoAP client initialized - IP: %s:%d", MAGISTRALA_IP,
+          MAGISTRALA_COAP_PORT);
+
+  return 0;
 }
 
-static int start_coap_client(void)
-{
-	int ret = 0;
-	struct sockaddr_in6 addr6;
+static int send_coap_message(const char *uri_path, const char *payload,
+                             size_t payload_len) {
+  static uint8_t request_buf[MAX_COAP_MSG_LEN];
+  static uint8_t response_buf[MAX_COAP_MSG_LEN];
+  struct coap_packet request, response;
+  int ret, recv_len;
+  struct sockaddr_in recv_addr;
+  socklen_t recv_addr_len = sizeof(recv_addr);
 
-	addr6.sin6_family = AF_INET6;
-	addr6.sin6_port = htons(PEER_PORT);
-	addr6.sin6_scope_id = 0U;
+  /* Initialize CoAP request */
+  ret = coap_packet_init(&request, request_buf, sizeof(request_buf),
+                         COAP_VERSION_1, COAP_TYPE_CON, COAP_TOKEN_MAX_LEN,
+                         coap_next_token(), COAP_METHOD_POST, coap_next_id());
+  if (ret < 0) {
+    LOG_ERR("Failed to init CoAP request: %d", ret);
+    return ret;
+  }
 
-	inet_pton(AF_INET6, CONFIG_NET_CONFIG_PEER_IPV6_ADDR,
-		  &addr6.sin6_addr);
+  /* Add URI path */
+  ret = coap_packet_append_option(&request, COAP_OPTION_URI_PATH, uri_path,
+                                  strlen(uri_path));
+  if (ret < 0) {
+    LOG_ERR("Failed to add URI path: %d", ret);
+    return ret;
+  }
 
-	sock = socket(addr6.sin6_family, SOCK_DGRAM, IPPROTO_UDP);
-	if (sock < 0) {
-		LOG_ERR("Failed to create UDP socket %d", errno);
-		return -errno;
-	}
+  /* Add authorization header with Client secret */
+  char auth_query[128];
+  ret = snprintf(auth_query, sizeof(auth_query), "auth=%s", CLIENT_SECRET);
+  if (ret >= sizeof(auth_query)) {
+    LOG_ERR("URI path too large");
+    return -E2BIG;
+  }
 
-	ret = connect(sock, (struct sockaddr *)&addr6, sizeof(addr6));
-	if (ret < 0) {
-		LOG_ERR("Cannot connect to UDP remote : %d", errno);
-		return -errno;
-	}
+  ret = coap_packet_append_option(&request, COAP_OPTION_URI_QUERY, auth_query,
+                                  strlen(auth_query));
+  if (ret < 0) {
+    LOG_ERR("Failed to add auth query: %d", ret);
+    return ret;
+  }
 
-	prepare_fds();
+  /* Add content format for JSON */
+  if (payload && payload_len > 0) {
+    /* Add payload */
+    ret = coap_packet_append_payload_marker(&request);
+    if (ret < 0) {
+      LOG_ERR("Failed to add payload marker: %d", ret);
+      return ret;
+    }
 
-	return 0;
+    ret = coap_packet_append_payload(&request, payload, payload_len);
+    if (ret < 0) {
+      LOG_ERR("Failed to add payload: %d", ret);
+      return ret;
+    }
+  }
+
+  /* Send request */
+  ret = sendto(coap_sock, request_buf, request.offset, 0,
+               (struct sockaddr *)&magistrala_addr, sizeof(magistrala_addr));
+  if (ret < 0) {
+    LOG_ERR("Failed to send CoAP request: %d", errno);
+    return -errno;
+  }
+
+  LOG_INF("CoAP request sent to %s", uri_path);
+
+  /* Wait for response (with timeout) */
+  struct pollfd pfd = {.fd = coap_sock, .events = POLLIN};
+
+  ret = poll(&pfd, 1, 5000); // 5 second timeout
+  if (ret <= 0) {
+    LOG_WRN("CoAP response timeout or error: %d", ret);
+    return -ETIMEDOUT;
+  }
+
+  /* Receive response */
+  recv_len = recvfrom(coap_sock, response_buf, sizeof(response_buf), 0,
+                      (struct sockaddr *)&recv_addr, &recv_addr_len);
+  if (recv_len < 0) {
+    LOG_ERR("Failed to receive CoAP response: %d", errno);
+    return -errno;
+  }
+
+  /* Parse response */
+  ret = coap_packet_parse(&response, response_buf, recv_len, NULL, 0);
+  if (ret < 0) {
+    LOG_ERR("Failed to parse CoAP response: %d", ret);
+    return ret;
+  }
+
+  uint8_t response_code = coap_header_get_code(&response);
+  LOG_DBG("CoAP response code: %d", response_code);
+
+  return 0;
 }
 
-static int process_simple_coap_reply(void)
-{
-	struct coap_packet reply;
-	uint8_t *data;
-	int rcvd;
-	int ret;
+static int wait_for_ip_address(void) {
+  struct net_if_addr *if_addr;
+  struct net_if *iface = net_if_get_default();
+  int timeout_count = 0;
+  const int max_timeout = 30; // 30 seconds max wait
 
-	wait();
+  /* Check if we already have an IP */
+  if_addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
+  if (if_addr) {
+    char addr_str[NET_IPV4_ADDR_LEN];
+    net_addr_ntop(AF_INET, &if_addr->address.in_addr, addr_str,
+                  sizeof(addr_str));
+    LOG_INF("Already have IP address: %s", addr_str);
+    return 0;
+  }
 
-	data = (uint8_t *)k_malloc(MAX_COAP_MSG_LEN);
-	if (!data) {
-		return -ENOMEM;
-	}
+  LOG_INF("Waiting for IP address via DHCP...");
 
-	rcvd = recv(sock, data, MAX_COAP_MSG_LEN, MSG_DONTWAIT);
-	if (rcvd == 0) {
-		ret = -EIO;
-		goto end;
-	}
+  /* Wait for DHCP with timeout */
+  int ret = k_sem_take(&dhcp_sem, K_SECONDS(max_timeout));
+  if (ret != 0) {
+    LOG_ERR("Timeout waiting for DHCP - checking if we have IP anyway");
 
-	if (rcvd < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			ret = 0;
-		} else {
-			ret = -errno;
-		}
+    /* Final check if we somehow got an IP */
+    if_addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
+    if (!if_addr) {
+      LOG_ERR("No IP address available");
+      return -ETIMEDOUT;
+    }
+  }
 
-		goto end;
-	}
+  /* Verify we have a valid IP */
+  if_addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
+  if (if_addr) {
+    char addr_str[NET_IPV4_ADDR_LEN];
+    net_addr_ntop(AF_INET, &if_addr->address.in_addr, addr_str,
+                  sizeof(addr_str));
+    LOG_INF("Got IP address: %s", addr_str);
+    return 0;
+  }
 
-	net_hexdump("Response", data, rcvd);
-
-	ret = coap_packet_parse(&reply, data, rcvd, NULL, 0);
-	if (ret < 0) {
-		LOG_ERR("Invalid data received");
-	}
-
-end:
-	k_free(data);
-
-	return ret;
+  LOG_ERR("Still no valid IP address");
+  return -1;
 }
 
-static int send_simple_coap_request(uint8_t method)
-{
-	uint8_t payload[] = "payload";
-	struct coap_packet request;
-	const char * const *p;
-	uint8_t *data;
-	int r;
+static int send_telemetry(void) {
+  char json_payload[256];
+  int ret;
 
-	data = (uint8_t *)k_malloc(MAX_COAP_MSG_LEN);
-	if (!data) {
-		return -ENOMEM;
-	}
+  ret = snprintf(json_payload, sizeof(json_payload),
+                 "{"
+                 "\"temperature\":%.1f,"
+                 "\"humidity\":%.1f,"
+                 "\"battery\":%d,"
+                 "\"led_state\":%s,"
+                 "\"timestamp\":%lld"
+                 "}",
+                 current_data.temperature, current_data.humidity,
+                 current_data.battery_level,
+                 current_data.led_state ? "true" : "false", k_uptime_get());
 
-	r = coap_packet_init(&request, data, MAX_COAP_MSG_LEN,
-			     COAP_VERSION_1, COAP_TYPE_CON,
-			     COAP_TOKEN_MAX_LEN, coap_next_token(),
-			     method, coap_next_id());
-	if (r < 0) {
-		LOG_ERR("Failed to init CoAP message");
-		goto end;
-	}
+  if (ret >= sizeof(json_payload)) {
+    LOG_ERR("JSON payload too large");
+    return -E2BIG;
+  }
 
-	for (p = test_path; p && *p; p++) {
-		r = coap_packet_append_option(&request, COAP_OPTION_URI_PATH,
-					      *p, strlen(*p));
-		if (r < 0) {
-			LOG_ERR("Unable add option to request");
-			goto end;
-		}
-	}
+  // Construct URI path: m/{domain_id}/c/{channel_id} --auth {client_secret}
+  char uri_path[128];
+  ret =
+      snprintf(uri_path, sizeof(uri_path), "m/%s/c/%s", DOMAIN_ID, CHANNEL_ID);
+  if (ret >= sizeof(uri_path)) {
+    LOG_ERR("URI path too large");
+    return -E2BIG;
+  }
 
-	switch (method) {
-	case COAP_METHOD_GET:
-	case COAP_METHOD_DELETE:
-		break;
+  ret = send_coap_message(uri_path, json_payload, strlen(json_payload));
+  if (ret < 0) {
+    LOG_ERR("Failed to send telemetry: %d", ret);
+    return ret;
+  }
 
-	case COAP_METHOD_PUT:
-	case COAP_METHOD_POST:
-		r = coap_packet_append_payload_marker(&request);
-		if (r < 0) {
-			LOG_ERR("Unable to append payload marker");
-			goto end;
-		}
+  LOG_INF("Telemetry sent: temp=%.2f °C, humidity=%.2f %%, battery=%d %%",
+          current_data.temperature, current_data.humidity,
+          current_data.battery_level);
 
-		r = coap_packet_append_payload(&request, (uint8_t *)payload,
-					       sizeof(payload) - 1);
-		if (r < 0) {
-			LOG_ERR("Not able to append payload");
-			goto end;
-		}
-
-		break;
-	default:
-		r = -EINVAL;
-		goto end;
-	}
-
-	net_hexdump("Request", request.data, request.offset);
-
-	r = send(sock, request.data, request.offset, 0);
-
-end:
-	k_free(data);
-
-	return r;
+  return 0;
 }
 
-static int send_simple_coap_msgs_and_wait_for_reply(void)
-{
-	uint8_t test_type = 0U;
-	int r;
+int main(void) {
+  LOG_INF("Magistrala CoAP Client Starting");
 
-	while (1) {
-		switch (test_type) {
-		case 0:
-			printk("\nCoAP client GET\n");
-			r = send_simple_coap_request(COAP_METHOD_GET);
-			if (r < 0) {
-				return r;
-			}
+  k_sleep(K_SECONDS(5));
 
-			break;
-		case 1:
-			printk("\nCoAP client PUT\n");
-			r = send_simple_coap_request(COAP_METHOD_PUT);
-			if (r < 0) {
-				return r;
-			}
+  LOG_INF("Initializing wifi");
 
-			break;
-		case 2:
-			printk("\nCoAP client POST\n");
-			r = send_simple_coap_request(COAP_METHOD_POST);
-			if (r < 0) {
-				return r;
-			}
+  initialize_wifi();
 
-			break;
-		case 3:
-			printk("\nCoAP client DELETE\n");
-			r = send_simple_coap_request(COAP_METHOD_DELETE);
-			if (r < 0) {
-				return r;
-			}
+  /* Setup network management callback for DHCP events */
+  net_mgmt_init_event_callback(&mgmt_cb, net_mgmt_event_handler,
+                               NET_EVENT_IPV4_DHCP_BOUND);
+  net_mgmt_add_event_callback(&mgmt_cb);
 
-			break;
-		default:
-			return 0;
-		}
+  /* Get STA interface in AP-STA mode. */
+  sta_iface = net_if_get_wifi_sta();
 
-		r = process_simple_coap_reply();
-		if (r < 0) {
-			return r;
-		}
+  int ret = connect_to_wifi(sta_iface, WIFI_SSID, WIFI_PSK);
+  if (ret) {
+    LOG_ERR("Unable to Connect to (%s)", WIFI_SSID);
+    return ret;
+  }
 
-		test_type++;
-	}
+  /* Wait for IP address via DHCP */
+  ret = wait_for_ip_address();
+  if (ret < 0) {
+    LOG_ERR("Failed to get IP address: %d", ret);
+    return ret;
+  }
 
-	return 0;
-}
+  LOG_INF("Will send telemetry every %d seconds", TELEMETRY_INTERVAL_SEC);
 
-static int process_large_coap_reply(void)
-{
-	struct coap_packet reply;
-	uint8_t *data;
-	bool last_block;
-	int rcvd;
-	int ret;
+  /* Initialize CoAP client */
+  ret = coap_client_init();
+  if (ret < 0) {
+    LOG_ERR("Failed to initialize CoAP client: %d", ret);
+    return ret;
+  }
 
-	wait();
+  LOG_INF("Starting telemetry transmission to Magistrala");
 
-	data = (uint8_t *)k_malloc(MAX_COAP_MSG_LEN);
-	if (!data) {
-		return -ENOMEM;
-	}
+  /* Send telemetry data */
+  ret = send_telemetry();
+  if (ret < 0) {
+    LOG_ERR("Failed to send telemetry: %d", ret);
+  }
 
-	rcvd = recv(sock, data, MAX_COAP_MSG_LEN, MSG_DONTWAIT);
-	if (rcvd == 0) {
-		ret = -EIO;
-		goto end;
-	}
-
-	if (rcvd < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			ret = 0;
-		} else {
-			ret = -errno;
-		}
-
-		goto end;
-	}
-
-	net_hexdump("Response", data, rcvd);
-
-	ret = coap_packet_parse(&reply, data, rcvd, NULL, 0);
-	if (ret < 0) {
-		LOG_ERR("Invalid data received");
-		goto end;
-	}
-
-	ret = coap_update_from_block(&reply, &blk_ctx);
-	if (ret < 0) {
-		goto end;
-	}
-
-	last_block = coap_next_block(&reply, &blk_ctx);
-	if (!last_block) {
-		ret = 1;
-		goto end;
-	}
-
-	ret = 0;
-
-end:
-	k_free(data);
-
-	return ret;
-}
-
-static int send_large_coap_request(void)
-{
-	struct coap_packet request;
-	const char * const *p;
-	uint8_t *data;
-	int r;
-
-	if (blk_ctx.total_size == 0) {
-		coap_block_transfer_init(&blk_ctx, COAP_BLOCK_64,
-					 BLOCK_WISE_TRANSFER_SIZE_GET);
-	}
-
-	data = (uint8_t *)k_malloc(MAX_COAP_MSG_LEN);
-	if (!data) {
-		return -ENOMEM;
-	}
-
-	r = coap_packet_init(&request, data, MAX_COAP_MSG_LEN,
-			     COAP_VERSION_1, COAP_TYPE_CON,
-			     COAP_TOKEN_MAX_LEN, coap_next_token(),
-			     COAP_METHOD_GET, coap_next_id());
-	if (r < 0) {
-		LOG_ERR("Failed to init CoAP message");
-		goto end;
-	}
-
-	for (p = large_path; p && *p; p++) {
-		r = coap_packet_append_option(&request, COAP_OPTION_URI_PATH,
-					      *p, strlen(*p));
-		if (r < 0) {
-			LOG_ERR("Unable add option to request");
-			goto end;
-		}
-	}
-
-	r = coap_append_block2_option(&request, &blk_ctx);
-	if (r < 0) {
-		LOG_ERR("Unable to add block2 option.");
-		goto end;
-	}
-
-	net_hexdump("Request", request.data, request.offset);
-
-	r = send(sock, request.data, request.offset, 0);
-
-end:
-	k_free(data);
-
-	return r;
-}
-
-static int get_large_coap_msgs(void)
-{
-	int r;
-
-	while (1) {
-		printk("\nCoAP client Large GET (block %zd)\n",
-		       blk_ctx.current / 64 /*COAP_BLOCK_64*/);
-		r = send_large_coap_request();
-		if (r < 0) {
-			return r;
-		}
-
-		r = process_large_coap_reply();
-		if (r < 0) {
-			return r;
-		}
-		if (r == 1) {
-			memset(&blk_ctx, 0, sizeof(blk_ctx));
-			return 0;
-		}
-	}
-
-	return 0;
-}
-
-static void send_obs_reply_ack(uint16_t id)
-{
-	struct coap_packet request;
-	uint8_t *data;
-	int r;
-
-	data = (uint8_t *)k_malloc(MAX_COAP_MSG_LEN);
-	if (!data) {
-		return;
-	}
-
-	r = coap_packet_init(&request, data, MAX_COAP_MSG_LEN,
-			     COAP_VERSION_1, COAP_TYPE_ACK, 0, NULL, 0, id);
-	if (r < 0) {
-		LOG_ERR("Failed to init CoAP message");
-		goto end;
-	}
-
-	net_hexdump("ACK", request.data, request.offset);
-
-	r = send(sock, request.data, request.offset, 0);
-	if (r < 0) {
-		LOG_ERR("Failed to send CoAP ACK");
-	}
-end:
-	k_free(data);
-}
-
-
-static int obs_notification_cb(const struct coap_packet *response,
-			       struct coap_reply *reply,
-			       const struct sockaddr *from)
-{
-	uint16_t id = coap_header_get_id(response);
-	uint8_t type = coap_header_get_type(response);
-	uint8_t *counter = (uint8_t *)reply->user_data;
-
-	ARG_UNUSED(from);
-
-	printk("\nCoAP OBS Notification\n");
-
-	(*counter)++;
-
-	if (type == COAP_TYPE_CON) {
-		send_obs_reply_ack(id);
-	}
-
-	return 0;
-}
-
-static int process_obs_coap_reply(struct coap_reply *reply)
-{
-	struct coap_packet reply_msg;
-	uint8_t *data;
-	int rcvd;
-	int ret;
-
-	wait();
-
-	data = (uint8_t *)k_malloc(MAX_COAP_MSG_LEN);
-	if (!data) {
-		return -ENOMEM;
-	}
-
-	rcvd = recv(sock, data, MAX_COAP_MSG_LEN, MSG_DONTWAIT);
-	if (rcvd == 0) {
-		ret = -EIO;
-		goto end;
-	}
-
-	if (rcvd < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			ret = 0;
-		} else {
-			ret = -errno;
-		}
-
-		goto end;
-	}
-
-	net_hexdump("Response", data, rcvd);
-
-	ret = coap_packet_parse(&reply_msg, data, rcvd, NULL, 0);
-	if (ret < 0) {
-		LOG_ERR("Invalid data received");
-		goto end;
-	}
-
-	if (coap_response_received(&reply_msg, NULL, reply, 1) == NULL) {
-		printk("\nOther response received\n");
-	}
-
-end:
-	k_free(data);
-
-	return ret;
-}
-
-static int send_obs_coap_request(struct coap_reply *reply, void *user_data)
-{
-	struct coap_packet request;
-	const char * const *p;
-	uint8_t *data;
-	int r;
-
-	data = (uint8_t *)k_malloc(MAX_COAP_MSG_LEN);
-	if (!data) {
-		return -ENOMEM;
-	}
-
-	r = coap_packet_init(&request, data, MAX_COAP_MSG_LEN,
-			     COAP_VERSION_1, COAP_TYPE_CON,
-			     COAP_TOKEN_MAX_LEN, coap_next_token(),
-			     COAP_METHOD_GET, coap_next_id());
-	if (r < 0) {
-		LOG_ERR("Failed to init CoAP message");
-		goto end;
-	}
-
-	r = coap_append_option_int(&request, COAP_OPTION_OBSERVE, 0);
-	if (r < 0) {
-		LOG_ERR("Failed to append Observe option");
-		goto end;
-	}
-
-	for (p = obs_path; p && *p; p++) {
-		r = coap_packet_append_option(&request, COAP_OPTION_URI_PATH,
-					      *p, strlen(*p));
-		if (r < 0) {
-			LOG_ERR("Unable add option to request");
-			goto end;
-		}
-	}
-
-	net_hexdump("Request", request.data, request.offset);
-
-	coap_reply_init(reply, &request);
-	reply->reply = obs_notification_cb;
-	reply->user_data = user_data;
-
-	r = send(sock, request.data, request.offset, 0);
-
-end:
-	k_free(data);
-
-	return r;
-}
-
-static int send_obs_reset_coap_request(struct coap_reply *reply)
-{
-	struct coap_packet request;
-	const char * const *p;
-	uint8_t *data;
-	int r;
-
-	data = (uint8_t *)k_malloc(MAX_COAP_MSG_LEN);
-	if (!data) {
-		return -ENOMEM;
-	}
-
-	r = coap_packet_init(&request, data, MAX_COAP_MSG_LEN,
-			     COAP_VERSION_1, COAP_TYPE_CON,
-			     reply->tkl, reply->token,
-			     COAP_METHOD_GET, coap_next_id());
-	if (r < 0) {
-		LOG_ERR("Failed to init CoAP message");
-		goto end;
-	}
-
-	r = coap_append_option_int(&request, COAP_OPTION_OBSERVE, 1);
-	if (r < 0) {
-		LOG_ERR("Failed to append Observe option");
-		goto end;
-	}
-
-	for (p = obs_path; p && *p; p++) {
-		r = coap_packet_append_option(&request, COAP_OPTION_URI_PATH,
-					      *p, strlen(*p));
-		if (r < 0) {
-			LOG_ERR("Unable add option to request");
-			goto end;
-		}
-	}
-
-	net_hexdump("Request", request.data, request.offset);
-
-	r = send(sock, request.data, request.offset, 0);
-
-end:
-	k_free(data);
-
-	return r;
-}
-
-static int register_observer(void)
-{
-	struct coap_reply reply;
-	uint8_t counter = 0;
-	int r;
-
-	printk("\nCoAP client OBS GET\n");
-	r = send_obs_coap_request(&reply, &counter);
-	if (r < 0) {
-		return r;
-	}
-
-	while (1) {
-		r = process_obs_coap_reply(&reply);
-		if (r < 0) {
-			return r;
-		}
-
-		if (counter >= 5) {
-			/* TODO: Functionality can be verified byt waiting for
-			 * some time and make sure client shouldn't receive
-			 * any notifications. If client still receives
-			 * notifications means, Observer is not removed.
-			 */
-			r = send_obs_reset_coap_request(&reply);
-			if (r < 0) {
-				return r;
-			}
-
-			/* Wait for the final ACK */
-			r = process_obs_coap_reply(&reply);
-			if (r < 0) {
-				return r;
-			}
-
-			break;
-		}
-	}
-
-	return 0;
-}
-
-int main(void)
-{
-	int r;
-
-	LOG_DBG("Start CoAP-client sample");
-	r = start_coap_client();
-	if (r < 0) {
-		goto quit;
-	}
-
-	/* GET, PUT, POST, DELETE */
-	r = send_simple_coap_msgs_and_wait_for_reply();
-	if (r < 0) {
-		goto quit;
-	}
-
-	/* Block-wise transfer */
-	r = get_large_coap_msgs();
-	if (r < 0) {
-		goto quit;
-	}
-
-	/* Register observer, get notifications and unregister */
-	r = register_observer();
-	if (r < 0) {
-		goto quit;
-	}
-
-	/* Close the socket */
-	(void)close(sock);
-
-	LOG_DBG("Done");
-
-	return 0;
-
-quit:
-	(void)close(sock);
-
-	LOG_ERR("quit");
-	return 0;
+  return 0;
 }
