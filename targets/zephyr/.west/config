@@ -1,0 +1,4 @@
+[manifest]
+path = m0-wifi
+file = west.yml
+
