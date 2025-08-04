@@ -1,8 +1,7 @@
-# SPDX-License-Identifier: Apache-2.0
-
 cmake_minimum_required(VERSION 3.20.0)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(wifi_apsta_mode)
+project(m0-mqtt)
 
-target_sources(app PRIVATE src/main.c)
+FILE(GLOB app_sources src/*.c)
+target_sources(app PRIVATE ${app_sources})
