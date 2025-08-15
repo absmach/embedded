@@ -12,7 +12,6 @@
 #include <zephyr/net/socket.h>
 #include <zephyr/net/tls_credentials.h>
 #include <zephyr/net/udp.h>
-#include <zephyr/net/websocket.h>
 #include <zephyr/random/random.h>
 
 LOG_MODULE_REGISTER(http_client);
@@ -247,7 +246,7 @@ static int start_app(void) {
 }
 
 int main(void) {
-  LOG_INF("Magistrala Websocket Client Starting");
+  LOG_INF("Magistrala HTTP Client Starting");
 
   k_sleep(K_SECONDS(5));
 
