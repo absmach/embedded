@@ -1,17 +1,14 @@
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-#include <zephyr/net/net_mgmt.h>
-#include <zephyr/net/socket.h>
-#include <zephyr/net/wifi_mgmt.h>
-
 #include "config.h"
 #include "wifi.h"
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/net/coap.h>
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/net_ip.h>
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/socket.h>
 #include <zephyr/net/udp.h>
+#include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/random/random.h>
 
 LOG_MODULE_REGISTER(coap_client);
@@ -36,8 +33,6 @@ static sensor_data_t current_data = {.temperature = 23.5,
                                      .humidity = 65.0,
                                      .battery_level = 85,
                                      .led_state = false};
-
-static uint16_t message_id = 1;
 
 /* Network event callback */
 static struct net_mgmt_event_callback mgmt_cb;
