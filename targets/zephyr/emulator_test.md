@@ -1,4 +1,4 @@
-# Zephyr RTOS - Hello World on QEMU RISC-V
+# Zephyr RTOS - Hello World on an Emulator. (QEMU and NATIVE_SIM)
 
 This README educates on building and running the **Zephyr RTOS Hello World** sample application using a **Python virtual environment** and the **West build system**.  
 It targets the `qemu_riscv32` board for testing in a simulated environment.
@@ -67,23 +67,47 @@ Navigate to the Hello World sample directory.
 cd zephyr/samples/hello_world
 ```
 
-7. Build the sample for the qemu_riscv32 target.
+## Using QEMU
+
+Build the sample for the qemu_riscv32 target.
 
 ```bash
 west build -b qemu_riscv32 -s . -d build
 ```
 
-8. After a successful build, run the application inside QEMU.
+After a successful build, run the application inside QEMU.
 
 ```bash
 west build -t run
 ```
 
-9. If successful, you should see:
+If successful, you should see:
 
 ```bash
 -- west build: running target run
 [0/1] To exit from QEMU enter: 'CTRL+a, x'[QEMU] CPU: riscv32
 *** Booting Zephyr OS build v4.2.0-415-g1f69b91e909c ***
 Hello World! qemu_riscv32/qemu_virt_riscv32
+```
+
+## Using NATIVE_SIM
+
+While in the project directory, 
+
+Build the sample for the native_sim target.
+
+```bash
+west build -b native_sim -s . -d build
+```
+
+After building, Zephyr creates a Linux executable, which is in the build directory. To run it:
+
+```bash
+./build/zephyr/zephyr.exe
+```
+
+If you want to rerun the code after modifying it:
+
+```bash
+west build -t run
 ```
