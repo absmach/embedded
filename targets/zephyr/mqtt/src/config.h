@@ -1,11 +1,18 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-const char *mgThingId = "71f48178-4238-41cf-8437-0b2b15f71c88";
-const char *mgThingKey = "8811241f-0fc1-4a4a-a4f9-0796ed5a93f8";
-const char *mgChannelId = "87518413-41e3-43c5-bf27-abd587821469";
-char mgTopic[150];
+/* STA Mode Configuration */
+#define WIFI_SSID "SSID"    // Replace `SSID` with WiFi ssid
+#define WIFI_PSK "PASSWORD" // Replace `PASSWORD` with Router password
 
-const char *server = " ";
+/* Magistrala Configuration */
+#define MAGISTRALA_IP                                                          \
+  "MAGISTRALA_IP" // Replace with your Magistrala instance IP
+#define MAGISTRALA_MQTT_PORT 1883
+#define DOMAIN_ID "DOMAIN_ID"         // Replace with your Domain ID
+#define CLIENT_ID "CLIENT_ID"         // Replace with your Client ID
+#define CLIENT_SECRET "CLIENT_SECRET" // Replace with your Client secret
+#define CHANNEL_ID "CHANNEL_ID"       // Replace with your Channel ID
+#define MQTT_CLIENTID "MQTT_CLIENTID" // Replace with your actual client ID
 
 #endif
