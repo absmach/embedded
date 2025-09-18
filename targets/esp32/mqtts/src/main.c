@@ -31,7 +31,7 @@ extern const uint8_t client_cert_pem_end[] asm("_binary_client_crt_end");
 extern const uint8_t client_key_pem_start[] asm("_binary_client_key_start");
 extern const uint8_t client_key_pem_end[] asm("_binary_client_key_end");
 extern const uint8_t server_cert_pem_start[] asm("_binary_mainflux_crt_start");
-extern const uint8_t server_cert_pem_end[] asm("_binaty_mainflux_crt_end");
+extern const uint8_t server_cert_pem_end[] asm("_binary_mainflux_crt_end");
 
 static void log_error_if_nonzero(const char *message, int error_code)
 {

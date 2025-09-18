@@ -1,0 +1,8 @@
+build/
+.west/
+
+managed_components/
+bootloader/
+modules/
+tools/
+.cache/

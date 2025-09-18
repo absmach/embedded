@@ -1,4 +1,3 @@
-#include "main.h"
 #include "MQTTClientapp.h"
 
 #define MESSAGE_DELAY 1000

@@ -11,7 +11,7 @@
 #include "esp_event.h"
 #include "nvs_flash.h"
 
-#include "protocol_examples_common.h"
+// #include "protocol_examples_common.h"
 #include "coap3/coap.h"
 #include "config.h"
 #include "cnetwork.h"
