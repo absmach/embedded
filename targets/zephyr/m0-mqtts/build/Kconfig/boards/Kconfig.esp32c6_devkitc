@@ -1,0 +1,2 @@
+# Load board Kconfig descriptions.
+osource "/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/boards/espressif/esp32c6_devkitc/Kconfig.esp32c6_devkitc"

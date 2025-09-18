@@ -1,0 +1,11 @@
+# Load Zephyr Arch Kconfig descriptions.
+osource "/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/arch/rx/Kconfig"
+osource "/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/arch/x86/Kconfig"
+osource "/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/arch/xtensa/Kconfig"
+osource "/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/arch/sparc/Kconfig"
+osource "/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/arch/riscv/Kconfig"
+osource "/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/arch/posix/Kconfig"
+osource "/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/arch/mips/Kconfig"
+osource "/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/arch/arm64/Kconfig"
+osource "/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/arch/arm/Kconfig"
+osource "/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/arch/arc/Kconfig"

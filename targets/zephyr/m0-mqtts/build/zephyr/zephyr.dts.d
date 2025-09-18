@@ -1,0 +1,28 @@
+empty_file.o: \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/misc/empty_file.c \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/boards/espressif/esp32c6_devkitc/esp32c6_devkitc_hpcore.dts \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/riscv/espressif/esp32c6/esp32c6_wroom_n8.dtsi \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/riscv/espressif/esp32c6/esp32c6_common.dtsi \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/common/mem.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/common/freq.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/dt-bindings/adc/adc.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/dt-bindings/dt-util.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/sys/util_macro.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/sys/util_internal.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/sys/util_loops.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/sys/util_listify.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/sys/util_internal_is_eq.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/sys/util_internal_util_inc.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/sys/util_internal_util_dec.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/sys/util_internal_util_x2.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/dt-bindings/gpio/gpio.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/dt-bindings/i2c/i2c.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/dt-bindings/interrupt-controller/esp-esp32c6-intmux.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/dt-bindings/clock/esp32c6_clock.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/dt-bindings/pinctrl/esp32c6-pinctrl.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/boards/espressif/esp32c6_devkitc/esp32c6_devkitc_hpcore-pinctrl.dtsi \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/dt-bindings/pinctrl/esp-pinctrl-common.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/dt-bindings/pinctrl/esp32c6-gpio-sigmap.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr/dt-bindings/input/input-event-codes.h \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/vendor/espressif/partitions_0x0_default.dtsi \
+ /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/vendor/espressif/partitions_0x0_default_4M.dtsi

@@ -1,0 +1,58 @@
+cmake:
+  application:
+    configuration-dir: '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/testmqtts/embedded/targets/zephyr/m0-mqtts'
+    source-dir: '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/testmqtts/embedded/targets/zephyr/m0-mqtts'
+  board:
+    name: 'esp32c6_devkitc'
+    path:
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/boards/espressif/esp32c6_devkitc'
+    qualifiers: 'esp32c6/hpcore'
+    revision: ''
+  devicetree:
+    bindings-dirs:
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/bindings'
+    files:
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/boards/espressif/esp32c6_devkitc/esp32c6_devkitc_hpcore.dts'
+    include-dirs:
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/modules/hal/ambiq/dts'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/modules/hal/atmel/include'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/modules/hal/bouffalolab/include'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/modules/hal/bouffalolab/include/zephyr'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/modules/hal/gigadevice/include'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/modules/hal/microchip/include'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/modules/hal/microchip/dts'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/modules/hal/nuvoton/dts'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/modules/hal/nxp/dts'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/modules/hal/stm32/dts'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/modules/hal/ti/dts'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/include/zephyr'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/common'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/vendor'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/rx'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/x86'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/xtensa'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/sparc'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/riscv'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/posix'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/arm64'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/arm'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts/arc'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/dts'
+  kconfig:
+    files:
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr/boards/espressif/esp32c6_devkitc/esp32c6_devkitc_hpcore_defconfig'
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/testmqtts/embedded/targets/zephyr/m0-mqtts/prj.conf'
+    user-files:
+     - '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/testmqtts/embedded/targets/zephyr/m0-mqtts/prj.conf'
+  toolchain:
+    name: 'zephyr'
+    path: '/home/kisaka_the_jones/zephyr-sdk-0.17.2'
+  zephyr:
+    version: '4.2.99'
+    zephyr-base: '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/zephyr'
+version: '0.1.0'
+west:
+  command: '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/bin/west build -p always -b esp32c6_devkitc'
+  topdir: '/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject'
+  version: '1.4.0'

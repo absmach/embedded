@@ -1,0 +1,1 @@
+"mcuboot":"/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/bootloader/mcuboot":"/home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject/bootloader/mcuboot/boot/zephyr/sysbuild"

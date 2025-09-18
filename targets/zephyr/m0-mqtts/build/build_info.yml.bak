@@ -1,0 +1,5 @@
+west:
+  command: /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/bin/west build -p
+    always -b esp32c6_devkitc
+  topdir: /home/kisaka_the_jones/ULTRAVIOLET/Absmach/venvzephyr/zephyrproject
+  version: 1.4.0
