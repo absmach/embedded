@@ -1,485 +1,636 @@
 #include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <string.h>
 
-#include <zephyr/net/socket.h>
+#include "ca_cert.h"
+#include "config.h"
+#include "wifi.h"
+#include <zephyr/app_memory/app_memdomain.h>
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/net/dns_resolve.h>
 #include <zephyr/net/mqtt.h>
-#include <zephyr/net/sntp.h>
+#include <zephyr/net/net_event.h>
+#include <zephyr/net/socket.h>
 #include <zephyr/net/tls_credentials.h>
-#include <zephyr/data/json.h>
+#include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/random/random.h>
-#include <zephyr/posix/time.h>
-#include <zephyr/logging/log.h>
-#include <mbedtls/memory_buffer_alloc.h>
 
-#include "creds/creds.h"
-#include "dhcp.h"
-#include "config.h"
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/net_ip.h>
+#include <zephyr/net/net_mgmt.h>
+#include <zephyr/net/wifi_mgmt.h>
 
-LOG_MODULE_REGISTER(mqtt, LOG_LEVEL_DBG);
+K_APPMEM_PARTITION_DEFINE(app_partition);
+#define APP_BMEM K_APP_BMEM(app_partition)
+#define APP_DMEM K_APP_DMEM(app_partition)
+#define SUCCESS_OR_EXIT(rc) success_or_exit(rc)
+#define SUCCESS_OR_BREAK(rc) success_or_break(rc)
+#define PROG_DELAY 5000
+#define MAX_CONNECTIONS 1
+#define MAX_ITERATIONS 10
 
-static struct sockaddr_in mgbroker;
+LOG_MODULE_REGISTER(mqtts_client, LOG_LEVEL_DBG);
 
-static uint8_t rx_buffer[MQTT_BUFFER_SIZE];
-static uint8_t tx_buffer[MQTT_BUFFER_SIZE];
-static uint8_t buffer[APP_BUFFER_SIZE];
-static struct mqtt_client client_ctx;
-static uint32_t messages_received_counter;
-static bool do_publish;
-static bool do_subscribe;
+static struct net_mgmt_event_callback mgmt_cb;
+static K_SEM_DEFINE(dhcp_sem, 0, 1);
 
-#define TLS_TAG_DEVICE_CERTIFICATE 1
-#define TLS_TAG_DEVICE_PRIVATE_KEY 1
-#define TLS_TAG_AWS_CA_CERTIFICATE 2
+static struct net_if *sta_iface;
 
-static sec_tag_t sec_tls_tags[] = {
-	TLS_TAG_DEVICE_CERTIFICATE,
-	TLS_TAG_AWS_CA_CERTIFICATE,
-};
+static APP_BMEM uint8_t rx_buffer[APP_MQTT_BUFFER_SIZE];
+static APP_BMEM uint8_t tx_buffer[APP_MQTT_BUFFER_SIZE];
 
-static int setup_credentials(void)
+static APP_BMEM struct mqtt_client client_ctx;
+
+static APP_BMEM struct sockaddr_storage broker_addr;
+
+static APP_BMEM struct zsock_pollfd fds[1];
+static APP_BMEM int nfds;
+
+static APP_BMEM bool connected;
+
+/* TLS credential tag */
+#define TLS_SEC_TAG 1
+
+static void prepare_fds(struct mqtt_client *client)
 {
-	int ret;
-
-	ret = tls_credential_add(TLS_TAG_DEVICE_CERTIFICATE, TLS_CREDENTIAL_SERVER_CERTIFICATE,
-							 public_cert, public_cert_len);
-	if (ret < 0)
-	{
-		LOG_ERR("Failed to add device certificate: %d", ret);
-		goto exit;
-	}
-
-	ret = tls_credential_add(TLS_TAG_DEVICE_PRIVATE_KEY, TLS_CREDENTIAL_PRIVATE_KEY,
-							 private_key, private_key_len);
-	if (ret < 0)
-	{
-		LOG_ERR("Failed to add device private key: %d", ret);
-		goto exit;
-	}
-
-	ret = tls_credential_add(TLS_TAG_AWS_CA_CERTIFICATE, TLS_CREDENTIAL_CA_CERTIFICATE, ca_cert,
-							 ca_cert_len);
-	if (ret < 0)
-	{
-		LOG_ERR("Failed to add device private key: %d", ret);
-		goto exit;
-	}
-
-exit:
-	return ret;
+  if (client->transport.type == MQTT_TRANSPORT_SECURE)
+  {
+    fds[0].fd = client->transport.tls.sock;
+  }
+  fds[0].events = ZSOCK_POLLIN;
+  nfds = 1;
 }
 
-static int subscribe_topic(void)
+static void clear_fds(void) { nfds = 0; }
+
+static int wait(int timeout)
 {
-	int ret;
-	struct mqtt_topic topics[] = {{
-		.topic = {.utf8 = mgTopic,
-				  .size = strlen(mgTopic)},
-		.qos = 0,
-	}};
-	const struct mqtt_subscription_list sub_list = {
-		.list = topics,
-		.list_count = ARRAY_SIZE(topics),
-		.message_id = 1u,
-	};
+  int ret = 0;
 
-	LOG_INF("Subscribing to %hu topic(s)", sub_list.list_count);
+  if (nfds > 0)
+  {
+    ret = zsock_poll(fds, nfds, timeout);
+    if (ret < 0)
+    {
+      LOG_ERR("poll error: %d", errno);
+    }
+  }
 
-	ret = mqtt_subscribe(&client_ctx, &sub_list);
-	if (ret != 0)
-	{
-		LOG_ERR("Failed to subscribe to topics: %d", ret);
-	}
-
-	return ret;
+  return ret;
 }
 
-static int publish_message(const char *topic, size_t topic_len, uint8_t *payload,
-						   size_t payload_len)
+void mqtt_evt_handler(struct mqtt_client *const client,
+                      const struct mqtt_evt *evt)
 {
-	static uint32_t message_id = 1u;
+  int err;
 
-	int ret;
-	struct mqtt_publish_param msg;
+  switch (evt->type)
+  {
+  case MQTT_EVT_CONNACK:
+    if (evt->result != 0)
+    {
+      LOG_ERR("MQTT connect failed %d", evt->result);
+      break;
+    }
 
-	msg.retain_flag = 0u;
-	msg.message.topic.topic.utf8 = topic;
-	msg.message.topic.topic.size = topic_len;
-	msg.message.topic.qos = 0;
-	msg.message.payload.data = payload;
-	msg.message.payload.len = payload_len;
-	msg.message_id = message_id++;
+    connected = true;
+    LOG_INF("MQTT client connected!");
 
-	ret = mqtt_publish(&client_ctx, &msg);
-	if (ret != 0)
-	{
-		LOG_ERR("Failed to publish message: %d", ret);
-	}
+    break;
 
-	LOG_INF("PUBLISHED on topic \"%s\" [ id: %u qos: %u ], payload: %u B", topic,
-			msg.message_id, msg.message.topic.qos, payload_len);
-	LOG_HEXDUMP_DBG(payload, payload_len, "Published payload:");
+  case MQTT_EVT_DISCONNECT:
+    LOG_INF("MQTT client disconnected %d", evt->result);
 
-	return ret;
+    connected = false;
+    clear_fds();
+
+    break;
+
+  case MQTT_EVT_PUBACK:
+    if (evt->result != 0)
+    {
+      LOG_ERR("MQTT PUBACK error %d", evt->result);
+      break;
+    }
+
+    LOG_INF("PUBACK packet id: %u", evt->param.puback.message_id);
+
+    break;
+
+  case MQTT_EVT_PUBREC:
+    if (evt->result != 0)
+    {
+      LOG_ERR("MQTT PUBREC error %d", evt->result);
+      break;
+    }
+
+    LOG_INF("PUBREC packet id: %u", evt->param.pubrec.message_id);
+
+    const struct mqtt_pubrel_param rel_param = {
+        .message_id = evt->param.pubrec.message_id};
+
+    err = mqtt_publish_qos2_release(client, &rel_param);
+    if (err != 0)
+    {
+      LOG_ERR("Failed to send MQTT PUBREL: %d", err);
+    }
+
+    break;
+
+  case MQTT_EVT_PUBCOMP:
+    if (evt->result != 0)
+    {
+      LOG_ERR("MQTT PUBCOMP error %d", evt->result);
+      break;
+    }
+
+    LOG_INF("PUBCOMP packet id: %u", evt->param.pubcomp.message_id);
+
+    break;
+
+  case MQTT_EVT_SUBACK:
+    if (evt->result != 0)
+    {
+      LOG_ERR("MQTT SUBACK error %d", evt->result);
+      break;
+    }
+
+    LOG_INF("SUBACK packet id: %u", evt->param.suback.message_id);
+
+    break;
+
+  case MQTT_EVT_PUBLISH:
+  {
+    const struct mqtt_publish_param *p = &evt->param.publish;
+
+    LOG_INF("PUBLISH received [%s] qos %d",
+            p->message.topic.topic.utf8,
+            p->message.topic.qos);
+
+    /* Read and discard payload */
+    uint8_t buf[128];
+    int len = p->message.payload.len;
+    int bytes_read;
+
+    while (len > 0)
+    {
+      bytes_read = mqtt_read_publish_payload_blocking(
+          &client_ctx, buf, len < sizeof(buf) ? len : sizeof(buf));
+      if (bytes_read < 0)
+      {
+        LOG_ERR("Failed to read payload: %d", bytes_read);
+        break;
+      }
+      len -= bytes_read;
+    }
+
+    /* Send PUBACK if QoS 1 */
+    if (p->message.topic.qos == MQTT_QOS_1_AT_LEAST_ONCE)
+    {
+      struct mqtt_puback_param ack = {.message_id = p->message_id};
+      mqtt_publish_qos1_ack(&client_ctx, &ack);
+    }
+
+    break;
+  }
+
+  case MQTT_EVT_PINGRESP:
+    LOG_INF("PINGRESP packet");
+    break;
+
+  default:
+    break;
+  }
 }
 
-static ssize_t handle_published_message(const struct mqtt_publish_param *pub)
+static char *get_mqtt_payload(enum mqtt_qos qos)
 {
-	int ret;
-	size_t received = 0u;
-	const size_t message_size = pub->message.payload.len;
-	const bool discarded = message_size > APP_BUFFER_SIZE;
+  static APP_DMEM char payload[64];
 
-	LOG_INF("RECEIVED on topic \"%s\" [ id: %u qos: %u ] payload: %u / %u B",
-			(const char *)pub->message.topic.topic.utf8, pub->message_id,
-			pub->message.topic.qos, message_size, APP_BUFFER_SIZE);
+  snprintk(payload, sizeof(payload),
+           "{\"message\":\"hello from zephyr\",\"qos\":%d}", qos);
 
-	while (received < message_size)
-	{
-		uint8_t *p = discarded ? buffer : &buffer[received];
-
-		ret = mqtt_read_publish_payload_blocking(&client_ctx, p, APP_BUFFER_SIZE);
-		if (ret < 0)
-		{
-			return ret;
-		}
-
-		received += ret;
-	}
-
-	if (!discarded)
-	{
-		LOG_HEXDUMP_DBG(buffer, MIN(message_size, 256u), "Received payload:");
-	}
-
-	switch (pub->message.topic.qos)
-	{
-	case MQTT_QOS_1_AT_LEAST_ONCE:
-	{
-		struct mqtt_puback_param puback;
-
-		puback.message_id = pub->message_id;
-		mqtt_publish_qos1_ack(&client_ctx, &puback);
-	}
-	break;
-	case MQTT_QOS_2_EXACTLY_ONCE:
-	case MQTT_QOS_0_AT_MOST_ONCE:
-	default:
-		break;
-	}
-
-	return discarded ? -ENOMEM : received;
+  return payload;
 }
 
-const char *mqtt_evt_type_to_str(enum mqtt_evt_type type)
+static int publish(struct mqtt_client *client, enum mqtt_qos qos)
 {
-	static const char *const types[] = {
-		"CONNACK",
-		"DISCONNECT",
-		"PUBLISH",
-		"PUBACK",
-		"PUBREC",
-		"PUBREL",
-		"PUBCOMP",
-		"SUBACK",
-		"UNSUBACK",
-		"PINGRESP",
-	};
+  struct mqtt_publish_param param;
 
-	return (type < ARRAY_SIZE(types)) ? types[type] : "<unknown>";
+  param.message.topic.qos = qos;
+  param.message.topic.topic.utf8 = (uint8_t *)MQTT_PUBLISH_TOPIC;
+  param.message.topic.topic.size = strlen(MQTT_PUBLISH_TOPIC);
+  param.message.payload.data = get_mqtt_payload(qos);
+  param.message.payload.len = strlen(param.message.payload.data);
+  param.message_id = sys_rand32_get();
+  param.dup_flag = 0U;
+  param.retain_flag = 0U;
+
+  return mqtt_publish(client, &param);
 }
 
-static void mqtt_event_cb(struct mqtt_client *client, const struct mqtt_evt *evt)
+static int subscribe(struct mqtt_client *client)
 {
-	LOG_DBG("MQTT event: %s [%u] result: %d", mqtt_evt_type_to_str(evt->type), evt->type,
-			evt->result);
+  struct mqtt_topic topics[] = {
+      {.topic = {.utf8 = (uint8_t *)MQTT_SUBSCRIBE_TOPIC,
+                 .size = strlen(MQTT_SUBSCRIBE_TOPIC)},
+       .qos = MQTT_QOS_1_AT_LEAST_ONCE}};
 
-	switch (evt->type)
-	{
-	case MQTT_EVT_CONNACK:
-	{
-		do_subscribe = true;
-	}
-	break;
+  const struct mqtt_subscription_list sub_list = {
+      .list = topics, .list_count = 1, .message_id = 1};
 
-	case MQTT_EVT_PUBLISH:
-	{
-		const struct mqtt_publish_param *pub = &evt->param.publish;
+  LOG_INF("Subscribing to: %s", MQTT_SUBSCRIBE_TOPIC);
 
-		handle_published_message(pub);
-		messages_received_counter++;
-#if !defined(CONFIG_AWS_TEST_SUITE_RECV_QOS1)
-		do_publish = true;
-#endif
-	}
-	break;
-
-	case MQTT_EVT_SUBACK:
-	{
-#if !defined(CONFIG_AWS_TEST_SUITE_RECV_QOS1)
-		do_publish = true;
-#endif
-	}
-	break;
-
-	case MQTT_EVT_PUBACK:
-	case MQTT_EVT_DISCONNECT:
-	case MQTT_EVT_PUBREC:
-	case MQTT_EVT_PUBREL:
-	case MQTT_EVT_PUBCOMP:
-	case MQTT_EVT_PINGRESP:
-	case MQTT_EVT_UNSUBACK:
-	default:
-		break;
-	}
+  return mqtt_subscribe(client, &sub_list);
 }
 
-static void client_setup(void)
+#define RC_STR(rc) ((rc) == 0 ? "OK" : "ERROR")
+
+#define PRINT_RESULT(func, rc) LOG_INF("%s: %d <%s>", (func), rc, RC_STR(rc))
+
+static int setup_tls_credentials(void)
 {
-	mqtt_client_init(&client_ctx);
+  int ret;
 
-	client_ctx.broker = &mgbroker;
-	client_ctx.evt_cb = mqtt_event_cb;
+  ret = tls_credential_add(TLS_SEC_TAG, TLS_CREDENTIAL_CA_CERTIFICATE,
+                           ca_cert, sizeof(ca_cert));
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to add CA certificate: %d", ret);
+    return ret;
+  }
 
-	client_ctx.client_id.utf8 = (uint8_t *)MQTT_CLIENTID;
-	client_ctx.client_id.size = sizeof(MQTT_CLIENTID) - 1;
-	client_ctx.password = mgThingKey;
-	client_ctx.user_name = mgThingId;
-	client_ctx.keepalive = KEEP_ALIVE;
-
-	client_ctx.protocol_version = MQTT_VERSION_3_1_1;
-
-	client_ctx.rx_buf = rx_buffer;
-	client_ctx.rx_buf_size = MQTT_BUFFER_SIZE;
-	client_ctx.tx_buf = tx_buffer;
-	client_ctx.tx_buf_size = MQTT_BUFFER_SIZE;
-
-	client_ctx.transport.type = MQTT_TRANSPORT_SECURE;
-	struct mqtt_sec_config *const tls_config = &client_ctx.transport.tls.config;
-
-	tls_config->peer_verify = TLS_PEER_VERIFY_REQUIRED;
-	tls_config->cipher_list = NULL;
-	tls_config->sec_tag_list = sec_tls_tags;
-	tls_config->sec_tag_count = ARRAY_SIZE(sec_tls_tags);
-	tls_config->hostname = brokername;
-	tls_config->cert_nocopy = TLS_CERT_NOCOPY_NONE;
+  LOG_INF("TLS credentials registered");
+  return 0;
 }
 
-struct backoff_context
+static int resolve_broker_addr(void)
 {
-	uint16_t retries_count;
-	uint16_t max_retries;
-};
+  int ret;
+  struct addrinfo *result;
+  struct addrinfo hints = {
+      .ai_family = AF_INET,
+      .ai_socktype = SOCK_STREAM,
+  };
 
-static void backoff_context_init(struct backoff_context *bo)
-{
-	__ASSERT_NO_MSG(bo != NULL);
+  LOG_INF("Resolving %s...", MOSQUITTO_BROKER_HOSTNAME);
 
-	bo->retries_count = 0u;
-	bo->max_retries = MAX_RETRIES;
+  ret = getaddrinfo(MOSQUITTO_BROKER_HOSTNAME, NULL, &hints, &result);
+  if (ret != 0)
+  {
+    LOG_ERR("getaddrinfo failed: %d", ret);
+    return -EINVAL;
+  }
+
+  struct sockaddr_in *broker4 = (struct sockaddr_in *)&broker_addr;
+  memcpy(broker4, result->ai_addr, sizeof(struct sockaddr_in));
+  broker4->sin_port = htons(MOSQUITTO_BROKER_PORT);
+
+  char addr_str[INET_ADDRSTRLEN];
+  inet_ntop(AF_INET, &broker4->sin_addr, addr_str, sizeof(addr_str));
+  LOG_INF("Resolved to %s:%d", addr_str, MOSQUITTO_BROKER_PORT);
+
+  freeaddrinfo(result);
+  return 0;
 }
 
-static void backoff_get_next(struct backoff_context *bo, uint32_t *next_backoff_ms)
+static void client_init(struct mqtt_client *client)
 {
-	__ASSERT_NO_MSG(bo != NULL);
-	__ASSERT_NO_MSG(next_backoff_ms != NULL);
-	*next_backoff_ms = BACKOFF_CONST_MS;
+  mqtt_client_init(client);
+
+  /* MQTT client configuration */
+  client->broker = &broker_addr;
+  client->evt_cb = mqtt_evt_handler;
+  client->client_id.utf8 = (uint8_t *)CLIENT_ID;
+  client->client_id.size = strlen(CLIENT_ID);
+
+  static struct mqtt_utf8 password_utf8;
+  static struct mqtt_utf8 user_name_utf8;
+
+  password_utf8.utf8 = (uint8_t *)CLIENT_SECRET;
+  password_utf8.size = strlen(CLIENT_SECRET);
+  user_name_utf8.utf8 = (uint8_t *)CLIENT_ID;
+  user_name_utf8.size = strlen(CLIENT_ID);
+
+  client->password = &password_utf8;
+  client->user_name = &user_name_utf8;
+
+  client->protocol_version = MQTT_VERSION_3_1_1;
+  client->keepalive = 60;
+  client->clean_session = 1U;
+
+  /* MQTT buffers configuration */
+  client->rx_buf = rx_buffer;
+  client->rx_buf_size = sizeof(rx_buffer);
+  client->tx_buf = tx_buffer;
+  client->tx_buf_size = sizeof(tx_buffer);
+
+  /* MQTT transport configuration - TLS */
+  client->transport.type = MQTT_TRANSPORT_SECURE;
+
+  struct mqtt_sec_config *tls_config = &client->transport.tls.config;
+
+  static sec_tag_t sec_tls_tags[] = {TLS_SEC_TAG};
+
+  tls_config->peer_verify = TLS_PEER_VERIFY_REQUIRED;
+  tls_config->cipher_list = NULL;
+  tls_config->sec_tag_list = sec_tls_tags;
+  tls_config->sec_tag_count = ARRAY_SIZE(sec_tls_tags);
+  tls_config->hostname = MOSQUITTO_BROKER_HOSTNAME;
+  tls_config->cert_nocopy = TLS_CERT_NOCOPY_NONE;
+
+  LOG_INF("Client initialized with TLS for %s", MOSQUITTO_BROKER_HOSTNAME);
 }
 
-static int client_try_connect(void)
+static int try_to_connect(struct mqtt_client *client)
 {
-	int ret;
-	uint32_t backoff_ms;
-	struct backoff_context bo;
+  int rc, i = 0;
 
-	backoff_context_init(&bo);
+  while (i++ < APP_CONNECT_TRIES && !connected)
+  {
 
-	while (bo.retries_count <= bo.max_retries)
-	{
-		ret = mqtt_connect(&client_ctx);
-		if (ret == 0)
-		{
-			goto exit;
-		}
+    client_init(client);
 
-		backoff_get_next(&bo, &backoff_ms);
+    rc = mqtt_connect(client);
+    if (rc != 0)
+    {
+      PRINT_RESULT("mqtt_connect", rc);
+      k_sleep(K_MSEC(APP_SLEEP_MSECS));
+      continue;
+    }
 
-		LOG_ERR("Failed to connect: %d backoff delay: %u ms", ret, backoff_ms);
-		k_msleep(backoff_ms);
-	}
+    prepare_fds(client);
 
-exit:
-	return ret;
+    if (wait(APP_CONNECT_TIMEOUT_MS))
+    {
+      mqtt_input(client);
+    }
+
+    if (!connected)
+    {
+      mqtt_abort(client);
+    }
+  }
+
+  if (connected)
+  {
+    return 0;
+  }
+
+  return -EINVAL;
 }
 
-struct publish_payload
+static int process_mqtt_and_sleep(struct mqtt_client *client, int timeout)
 {
-	uint32_t counter;
-};
+  int64_t remaining = timeout;
+  int64_t start_time = k_uptime_get();
+  int rc;
 
-static const struct json_obj_descr json_descr[] = {
-	JSON_OBJ_DESCR_PRIM(struct publish_payload, counter, JSON_TOK_NUMBER),
-};
+  while (remaining > 0 && connected)
+  {
+    if (wait(remaining))
+    {
+      rc = mqtt_input(client);
+      if (rc != 0)
+      {
+        PRINT_RESULT("mqtt_input", rc);
+        return rc;
+      }
+    }
 
-static void format_mainflux_message_topic(void)
-{
-	const char *_preId = "channels/";
-	const char *_postId = "/messages";
-	strcpy(mgTopic, _preId);
-	strcat(mgTopic, mgChannelId);
-	strcat(mgTopic, _postId);
+    rc = mqtt_live(client);
+    if (rc != 0 && rc != -EAGAIN)
+    {
+      PRINT_RESULT("mqtt_live", rc);
+      return rc;
+    }
+    else if (rc == 0)
+    {
+      rc = mqtt_input(client);
+      if (rc != 0)
+      {
+        PRINT_RESULT("mqtt_input", rc);
+        return rc;
+      }
+    }
+
+    remaining = timeout + start_time - k_uptime_get();
+  }
+
+  return 0;
 }
 
-static int publish(void)
+int success_or_exit(int rc)
 {
-	struct publish_payload pl = {.counter = messages_received_counter};
+  if (rc != 0)
+  {
+    return 1;
+  }
 
-	json_obj_encode_buf(json_descr, ARRAY_SIZE(json_descr), &pl, buffer, sizeof(buffer));
-	format_mainflux_message_topic();
-
-	return publish_message(mgTopic, strlen(mgTopic), buffer,
-						   strlen(buffer));
+  return 0;
 }
 
-void client_loop(void)
+void success_or_break(int rc)
 {
-	int rc;
-	int timeout;
-	struct zsock_pollfd fds;
-
-	client_setup();
-
-	rc = client_try_connect();
-	if (rc != 0)
-	{
-		goto cleanup;
-	}
-
-	fds.fd = client_ctx.transport.tcp.sock;
-	fds.events = ZSOCK_POLLIN;
-
-	for (;;)
-	{
-		timeout = mqtt_keepalive_time_left(&client_ctx);
-		rc = zsock_poll(&fds, 1u, timeout);
-		if (rc >= 0)
-		{
-			if (fds.revents & ZSOCK_POLLIN)
-			{
-				rc = mqtt_input(&client_ctx);
-				if (rc != 0)
-				{
-					LOG_ERR("Failed to read MQTT input: %d", rc);
-					break;
-				}
-			}
-
-			if (fds.revents & (ZSOCK_POLLHUP | ZSOCK_POLLERR))
-			{
-				LOG_ERR("Socket closed/error");
-				break;
-			}
-
-			rc = mqtt_live(&client_ctx);
-			if ((rc != 0) && (rc != -EAGAIN))
-			{
-				LOG_ERR("Failed to live MQTT: %d", rc);
-				break;
-			}
-		}
-		else
-		{
-			LOG_ERR("poll failed: %d", rc);
-			break;
-		}
-
-		if (do_publish)
-		{
-			do_publish = false;
-			publish();
-		}
-
-		if (do_subscribe)
-		{
-			do_subscribe = false;
-			subscribe_topic();
-		}
-	}
-
-cleanup:
-	mqtt_disconnect(&client_ctx);
-
-	zsock_close(fds.fd);
-	fds.fd = -1;
+  if (rc != 0)
+  {
+    return;
+  }
 }
 
-int sntp_sync_time(void)
+static int publisher(void)
 {
-	int rc;
-	struct sntp_time now;
-	struct timespec tspec;
+  int i, rc, r = 0;
 
-	rc = sntp_simple(SNTP_SERVER, SYS_FOREVER_MS, &now);
-	if (rc == 0)
-	{
-		tspec.tv_sec = now.seconds;
-		tspec.tv_nsec = ((uint64_t)now.fraction * (1000lu * 1000lu * 1000lu)) >> 32;
+  LOG_INF("attempting to connect: ");
+  rc = try_to_connect(&client_ctx);
+  PRINT_RESULT("try_to_connect", rc);
+  SUCCESS_OR_EXIT(rc);
 
-		clock_settime(CLOCK_REALTIME, &tspec);
+  /* Subscribe to topic */
+  rc = subscribe(&client_ctx);
+  PRINT_RESULT("mqtt_subscribe", rc);
 
-		LOG_DBG("Acquired time from NTP server: %u", (uint32_t)tspec.tv_sec);
-	}
-	else
-	{
-		LOG_ERR("Failed to acquire SNTP, code %d\n", rc);
-	}
-	return rc;
+  rc = process_mqtt_and_sleep(&client_ctx, APP_SLEEP_MSECS);
+
+  i = 0;
+  while (i++ < MAX_ITERATIONS && connected)
+  {
+    r = -1;
+
+    rc = mqtt_ping(&client_ctx);
+    PRINT_RESULT("mqtt_ping", rc);
+    SUCCESS_OR_BREAK(rc);
+
+    rc = process_mqtt_and_sleep(&client_ctx, APP_SLEEP_MSECS);
+    SUCCESS_OR_BREAK(rc);
+
+    rc = publish(&client_ctx, MQTT_QOS_0_AT_MOST_ONCE);
+    PRINT_RESULT("mqtt_publish", rc);
+    SUCCESS_OR_BREAK(rc);
+
+    rc = process_mqtt_and_sleep(&client_ctx, APP_SLEEP_MSECS);
+    SUCCESS_OR_BREAK(rc);
+
+    rc = publish(&client_ctx, MQTT_QOS_1_AT_LEAST_ONCE);
+    PRINT_RESULT("mqtt_publish", rc);
+    SUCCESS_OR_BREAK(rc);
+
+    rc = process_mqtt_and_sleep(&client_ctx, APP_SLEEP_MSECS);
+    SUCCESS_OR_BREAK(rc);
+
+    rc = publish(&client_ctx, MQTT_QOS_2_EXACTLY_ONCE);
+    PRINT_RESULT("mqtt_publish", rc);
+    SUCCESS_OR_BREAK(rc);
+
+    rc = process_mqtt_and_sleep(&client_ctx, APP_SLEEP_MSECS);
+    SUCCESS_OR_BREAK(rc);
+
+    r = 0;
+  }
+
+  rc = mqtt_disconnect(&client_ctx, NULL);
+  PRINT_RESULT("mqtt_disconnect", rc);
+
+  LOG_INF("Bye!");
+
+  return r;
 }
 
-static int resolve_broker_addr(struct sockaddr_in *broker)
+static int start_app(void)
 {
-	int ret;
-	struct zsock_addrinfo *ai = NULL;
+  int r = 0, i = 0;
 
-	const struct zsock_addrinfo hints = {
-		.ai_family = AF_INET,
-		.ai_socktype = SOCK_STREAM,
-		.ai_protocol = 0,
-	};
+  while (!MAX_CONNECTIONS ||
+         i++ < MAX_CONNECTIONS)
+  {
+    r = publisher();
 
-	ret = zsock_getaddrinfo(BROKER, BROKER_PORT, &hints, &ai);
-	if (ret == 0)
-	{
-		char addr_str[INET_ADDRSTRLEN];
+    if (!MAX_CONNECTIONS)
+    {
+      k_sleep(K_MSEC(PROG_DELAY));
+    }
+  }
 
-		memcpy(broker, ai->ai_addr, MIN(ai->ai_addrlen, sizeof(struct sockaddr_storage)));
+  return r;
+}
 
-		zsock_inet_ntop(AF_INET, &broker->sin_addr, addr_str, sizeof(addr_str));
-		LOG_INF("Resolved: %s:%u", addr_str, htons(broker->sin_port));
-	}
-	else
-	{
-		LOG_ERR("failed to resolve hostname err = %d (errno = %d)", ret, errno);
-	}
+static void net_mgmt_event_handler(struct net_mgmt_event_callback *cb,
+                                   uint64_t mgmt_event, struct net_if *iface)
+{
+  if (mgmt_event == NET_EVENT_IPV4_DHCP_BOUND)
+  {
+    LOG_INF("DHCP bound - got IP address");
+    k_sem_give(&dhcp_sem);
+  }
+}
 
-	zsock_freeaddrinfo(ai);
+static int wait_for_ip_address(struct net_if *iface)
+{
+  const int max_timeout = 30; // 30 seconds max wait
 
-	return ret;
+  /* Check if we already have an IP */
+  struct in_addr *addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
+  if (addr)
+  {
+    char addr_str[NET_IPV4_ADDR_LEN];
+    net_addr_ntop(AF_INET, addr, addr_str, sizeof(addr_str));
+    LOG_INF("Already have IP address: %s", addr_str);
+    return 0;
+  }
+
+  LOG_INF("Waiting for IP address via DHCP...");
+
+  /* Wait for DHCP with timeout */
+  int ret = k_sem_take(&dhcp_sem, K_SECONDS(max_timeout));
+  if (ret != 0)
+  {
+    LOG_ERR("Timeout waiting for DHCP - checking if we have IP anyway");
+
+    /* Final check if we somehow got an IP */
+    addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
+    if (!addr)
+    {
+      LOG_ERR("No IP address available");
+      return -ETIMEDOUT;
+    }
+  }
+
+  /* Verify we have a valid IP */
+  addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
+  if (addr)
+  {
+    char addr_str[NET_IPV4_ADDR_LEN];
+    net_addr_ntop(AF_INET, addr, addr_str, sizeof(addr_str));
+    LOG_INF("Got IP address: %s", addr_str);
+    return 0;
+  }
+
+  LOG_ERR("Still no valid IP address");
+  return -1;
 }
 
 int main(void)
 {
-	sntp_sync_time();
-	setup_credentials();
+  int ret;
 
-	for (;;)
-	{
-		resolve_broker_addr(&mgbroker);
+  LOG_INF("Mosquitto MQTTS Client Starting");
 
-		client_loop();
-		k_sleep(K_SECONDS(1));
-	}
+  k_sleep(K_SECONDS(5));
 
-	return 0;
+  LOG_INF("Initializing wifi");
+
+  initialize_wifi();
+
+  /* Setup network management callback for DHCP events */
+  net_mgmt_init_event_callback(&mgmt_cb, net_mgmt_event_handler,
+                               NET_EVENT_IPV4_DHCP_BOUND);
+  net_mgmt_add_event_callback(&mgmt_cb);
+
+  /* Get STA interface in AP-STA mode. */
+  sta_iface = net_if_get_wifi_sta();
+  if (sta_iface == NULL)
+  {
+    LOG_ERR("Failed to get WiFi STA interface");
+    return -ENODEV;
+  }
+
+  ret = connect_to_wifi(sta_iface, WIFI_SSID, WIFI_PSK);
+  if (ret)
+  {
+    LOG_ERR("Unable to Connect to (%s)", WIFI_SSID);
+    return ret;
+  }
+
+  /* Wait for IP address via DHCP */
+  ret = wait_for_ip_address(sta_iface);
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to get IP address: %d", ret);
+    return ret;
+  }
+
+  /* Add a small delay to ensure network is fully ready */
+  k_sleep(K_SECONDS(2));
+
+  /* Setup TLS credentials */
+  ret = setup_tls_credentials();
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to setup TLS credentials: %d", ret);
+    return ret;
+  }
+
+  /* Resolve broker address */
+  ret = resolve_broker_addr();
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to resolve broker address: %d", ret);
+    return ret;
+  }
+
+  LOG_INF("Will send telemetry every %d seconds", TELEMETRY_INTERVAL_SEC);
+
+  exit(start_app());
+  return 0;
 }
