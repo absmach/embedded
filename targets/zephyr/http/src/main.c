@@ -3,7 +3,8 @@
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/socket.h>
 #include <zephyr/net/wifi_mgmt.h>
-
+#include <zephyr/net/http/client.h>
+#include <zephyr/sys/reboot.h>
 #include "config.h"
 #include "wifi.h"
 #include <zephyr/net/net_if.h>
@@ -20,7 +21,8 @@ static struct net_if *sta_iface;
 
 #define TELEMETRY_INTERVAL_SEC 30
 
-typedef struct {
+typedef struct
+{
   double temperature;
   double humidity;
   int battery_level;
@@ -41,19 +43,23 @@ static uint8_t recv_buf_ipv4[MAX_RECV_BUF_LEN];
 static uint8_t recv_buf_ipv6[MAX_RECV_BUF_LEN];
 
 static void net_mgmt_event_handler(struct net_mgmt_event_callback *cb,
-                                   uint32_t mgmt_event, struct net_if *iface) {
-  if (mgmt_event == NET_EVENT_IPV4_DHCP_BOUND) {
+                                   uint32_t mgmt_event, struct net_if *iface)
+{
+  if (mgmt_event == NET_EVENT_IPV4_DHCP_BOUND)
+  {
     LOG_INF("DHCP bound - got IP address");
     k_sem_give(&dhcp_sem);
   }
 }
 
-static int wait_for_ip_address(struct net_if *iface) {
+static int wait_for_ip_address(struct net_if *iface)
+{
   struct net_if_addr *if_addr;
-  const int max_timeout = 30; // 30 seconds max wait
+  const int max_timeout = 30;
 
   if_addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
-  if (if_addr) {
+  if (if_addr)
+  {
     char addr_str[NET_IPV4_ADDR_LEN];
     net_addr_ntop(AF_INET, &if_addr->address.in_addr, addr_str,
                   sizeof(addr_str));
@@ -64,18 +70,21 @@ static int wait_for_ip_address(struct net_if *iface) {
   LOG_INF("Waiting for IP address via DHCP...");
 
   int ret = k_sem_take(&dhcp_sem, K_SECONDS(max_timeout));
-  if (ret != 0) {
+  if (ret != 0)
+  {
     LOG_ERR("Timeout waiting for DHCP - checking if we have IP anyway");
 
     if_addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
-    if (!if_addr) {
+    if (!if_addr)
+    {
       LOG_ERR("No IP address available");
       return -ETIMEDOUT;
     }
   }
 
   if_addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
-  if (if_addr) {
+  if (if_addr)
+  {
     char addr_str[NET_IPV4_ADDR_LEN];
     net_addr_ntop(AF_INET, &if_addr->address.in_addr, addr_str,
                   sizeof(addr_str));
@@ -87,38 +96,59 @@ static int wait_for_ip_address(struct net_if *iface) {
   return -1;
 }
 
-static int setup_socket(sa_family_t family, const char *server, int port,
-                        int *sock, struct sockaddr *addr, socklen_t addr_len) {
-  const char *family_str = family == AF_INET ? "IPv4" : "IPv6";
-  int ret = 0;
+static int resolve_hostname(const char *hostname,
+                            struct sockaddr_storage *addr)
+{
+  int ret;
+  struct addrinfo *result;
+  struct addrinfo hints = {
+      .ai_family = AF_INET,
+      .ai_socktype = SOCK_STREAM,
+  };
 
-  memset(addr, 0, addr_len);
+  LOG_INF("Resolving %s...", hostname);
 
-  if (family == AF_INET) {
-    net_sin(addr)->sin_family = AF_INET;
-    net_sin(addr)->sin_port = htons(port);
-    inet_pton(family, server, &net_sin(addr)->sin_addr);
-  } else {
-    net_sin6(addr)->sin6_family = AF_INET6;
-    net_sin6(addr)->sin6_port = htons(port);
-    inet_pton(family, server, &net_sin6(addr)->sin6_addr);
+  ret = getaddrinfo(hostname, NULL, &hints, &result);
+  if (ret != 0)
+  {
+    LOG_ERR("getaddrinfo failed: %d", ret);
+    return -EINVAL;
   }
 
-  *sock = socket(family, SOCK_STREAM, IPPROTO_TCP);
+  struct sockaddr_in *addr4 = (struct sockaddr_in *)addr;
+  memcpy(addr4, result->ai_addr, sizeof(struct sockaddr_in));
 
-  if (*sock < 0) {
-    LOG_ERR("Failed to create %s HTTP socket (%d)", family_str, -errno);
+  char addr_str[INET_ADDRSTRLEN];
+  inet_ntop(AF_INET, &addr4->sin_addr, addr_str, sizeof(addr_str));
+  LOG_INF("Resolved to %s", addr_str);
+
+  freeaddrinfo(result);
+  return 0;
+}
+
+static int setup_socket(int *sock)
+{
+  int ret = 0;
+
+  *sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+  if (*sock < 0)
+  {
+    LOG_ERR("Failed to create HTTP socket (%d)", -errno);
+    ret = -errno;
   }
 
   return ret;
 }
 
-static int payload_cb(int sock, struct http_request *req, void *user_data) {
+static int payload_cb(int sock, struct http_request *req, void *user_data)
+{
   const char *content[] = {"foobar", "chunked", "last"};
   char tmp[64];
   int i, pos = 0;
 
-  for (i = 0; i < ARRAY_SIZE(content); i++) {
+  for (i = 0; i < ARRAY_SIZE(content); i++)
+  {
     pos += snprintk(tmp + pos, sizeof(tmp) - pos, "%x\r\n%s\r\n",
                     (unsigned int)strlen(content[i]), content[i]);
   }
@@ -131,10 +161,14 @@ static int payload_cb(int sock, struct http_request *req, void *user_data) {
 }
 
 static int response_cb(struct http_response *rsp,
-                       enum http_final_call final_data, void *user_data) {
-  if (final_data == HTTP_DATA_MORE) {
+                       enum http_final_call final_data, void *user_data)
+{
+  if (final_data == HTTP_DATA_MORE)
+  {
     LOG_INF("Partial data received (%zd bytes)", rsp->data_len);
-  } else if (final_data == HTTP_DATA_FINAL) {
+  }
+  else if (final_data == HTTP_DATA_FINAL)
+  {
     LOG_INF("All the data received (%zd bytes)", rsp->data_len);
   }
 
@@ -144,100 +178,131 @@ static int response_cb(struct http_response *rsp,
   return 0;
 }
 
-static int connect_socket(sa_family_t family, const char *server, int port,
-                          int *sock, struct sockaddr *addr,
-                          socklen_t addr_len) {
+static int connect_socket(int *sock, struct sockaddr_storage *addr)
+{
   int ret;
 
-  ret = setup_socket(family, server, port, sock, addr, addr_len);
-  if (ret < 0 || *sock < 0) {
+  ret = setup_socket(sock);
+  if (ret < 0 || *sock < 0)
+  {
     return -1;
   }
 
-  ret = connect(*sock, addr, addr_len);
-  if (ret < 0) {
-    LOG_ERR("Cannot connect to %s remote (%d)",
-            family == AF_INET ? "IPv4" : "IPv6", -errno);
+  struct sockaddr_in *addr4 = (struct sockaddr_in *)addr;
+  char addr_str[INET_ADDRSTRLEN];
+  inet_ntop(AF_INET, &addr4->sin_addr, addr_str, sizeof(addr_str));
+
+  LOG_INF("Connecting to %s:%d...", addr_str, ntohs(addr4->sin_port));
+
+  ret = connect(*sock, (struct sockaddr *)addr, sizeof(struct sockaddr_in));
+  if (ret < 0)
+  {
+    LOG_ERR("Cannot connect to remote (%d)", -errno);
     close(*sock);
     *sock = -1;
     ret = -errno;
   }
+  else
+  {
+    LOG_INF("Connected successfully");
+  }
 
   return ret;
 }
 
-static int run_queries(void) {
-  struct sockaddr_in addr4;
-  int sock4 = -1;
+static void update_sensor_data(sensor_data_t *data)
+{
+  data->temperature = 20.0 + (sys_rand32_get() % 1000) / 100.0; // 20-30°C
+  data->humidity = 50.0 + (sys_rand32_get() % 3000) / 100.0;    // 50-80%
+  data->battery_level = 70 + (sys_rand32_get() % 30);           // 70-99%
+  data->led_state = !data->led_state;                           // Toggle LED
+}
+
+static int run_queries(void)
+{
+  static struct sockaddr_storage server_addr;
+  static bool addr_resolved = false;
+  int sock = -1;
   int32_t timeout = 3 * MSEC_PER_SEC;
   int ret = 0;
-  int port = MAGISTRALA_HTTP_PORT;
 
-  if (IS_ENABLED(CONFIG_NET_IPV4)) {
-    (void)connect_socket(AF_INET, MAGISTRALA_IP, port, &sock4,
-                         (struct sockaddr *)&addr4, sizeof(addr4));
+  if (!addr_resolved)
+  {
+    ret = resolve_hostname(MAGISTRALA_HOSTNAME, &server_addr);
+    if (ret < 0)
+    {
+      LOG_ERR("Failed to resolve hostname: %d", ret);
+      return ret;
+    }
+
+    ((struct sockaddr_in *)&server_addr)->sin_port =
+        htons(MAGISTRALA_HTTP_PORT);
+    addr_resolved = true;
   }
 
-  if (sock4 < 0) {
-    LOG_ERR("Cannot create HTTP connection.");
-    return -ECONNABORTED;
-  }
-
-  sock4 = -1;
-  if (IS_ENABLED(CONFIG_NET_IPV4)) {
-    (void)connect_socket(AF_INET, MAGISTRALA_IP, port, &sock4,
-                         (struct sockaddr *)&addr4, sizeof(addr4));
-  }
-
-  if (sock4 < 0) {
+  ret = connect_socket(&sock, &server_addr);
+  if (ret < 0 || sock < 0)
+  {
     LOG_ERR("Cannot create HTTP connection for SenML telemetry.");
     return -ECONNABORTED;
   }
 
-  if (sock4 >= 0 && IS_ENABLED(CONFIG_NET_IPV4)) {
-    struct http_request req;
+  update_sensor_data(&current_data);
 
-    const char *senml_payload = "[{\"bn\":\"some-base-name:\",\"bt\":1."
-                                "276020076001e+09,\"bu\":\"A\",\"bver\":5,"
-                                "\"n\":\"voltage\",\"u\":\"V\",\"v\":120.1},"
-                                "{\"n\":\"current\",\"t\":-5,\"v\":1.2},"
-                                "{\"n\":\"current\",\"t\":-4,\"v\":1.3}]";
+  struct http_request req;
 
-    char auth_header[128];
-    snprintf(auth_header, sizeof(auth_header), "Authorization: Client %s\r\n",
-             CLIENT_SECRET);
+  int64_t unix_time = k_uptime_get() / 1000 + 1761700000; // Approximate Unix time
 
-    const char *headers[] = {"Content-Type: application/senml+json\r\n",
-                             auth_header, NULL};
+  char senml_payload[512];
+  snprintf(senml_payload, sizeof(senml_payload),
+           "[{\"bn\":\"esp32s3:\",\"bt\":%lld,\"bu\":\"Cel\",\"bver\":5,"
+           "\"n\":\"temperature\",\"u\":\"Cel\",\"v\":%.2f},"
+           "{\"n\":\"humidity\",\"u\":\"%%RH\",\"v\":%.2f},"
+           "{\"n\":\"battery\",\"u\":\"%%\",\"v\":%d},"
+           "{\"n\":\"led\",\"vb\":%s}]",
+           unix_time, current_data.temperature, current_data.humidity,
+           current_data.battery_level, current_data.led_state ? "true" : "false");
 
-    // Prepare URL m/domain/c/channel
-    char url[256];
-    snprintf(url, sizeof(url), "/m/%s/c/%s", DOMAIN_ID, CHANNEL_ID);
+  LOG_INF("Sending telemetry: temp=%.2f°C, humidity=%.2f%%, battery=%d%%, led=%s, time=%lld",
+          current_data.temperature, current_data.humidity, current_data.battery_level,
+          current_data.led_state ? "ON" : "OFF", unix_time);
 
-    memset(&req, 0, sizeof(req));
-    req.method = HTTP_POST;
-    req.url = url;
-    req.host = MAGISTRALA_IP;
-    req.protocol = "HTTP/1.1";
-    req.payload = senml_payload;
-    req.payload_len = strlen(senml_payload);
-    req.header_fields = headers;
-    req.response = response_cb;
-    req.recv_buf = recv_buf_ipv4;
-    req.recv_buf_len = sizeof(recv_buf_ipv4);
+  char auth_header[128];
+  snprintf(auth_header, sizeof(auth_header), "Authorization: Client %s\r\n",
+           CLIENT_SECRET);
 
-    ret = http_client_req(sock4, &req, timeout, "SenML POST");
+  const char *headers[] = {"Content-Type: application/senml+json\r\n",
+                           auth_header, NULL};
 
-    close(sock4);
-  }
+  // Prepare URL m/domain/c/channel
+  char url[256];
+  snprintf(url, sizeof(url), "/m/%s/c/%s", DOMAIN_ID, CHANNEL_ID);
+
+  memset(&req, 0, sizeof(req));
+  req.method = HTTP_POST;
+  req.url = url;
+  req.host = MAGISTRALA_HOSTNAME;
+  req.protocol = "HTTP/1.1";
+  req.payload = senml_payload;
+  req.payload_len = strlen(senml_payload);
+  req.header_fields = headers;
+  req.response = response_cb;
+  req.recv_buf = recv_buf_ipv4;
+  req.recv_buf_len = sizeof(recv_buf_ipv4);
+
+  ret = http_client_req(sock, &req, timeout, "SenML POST");
+
+  close(sock);
 
   return ret;
 }
 
-static int start_app(void) {
+static int start_app(void)
+{
   int r = 0;
 
-  for (int i = 0; i < 10; i++) {
+  for (int i = 0; i < 10; i++)
+  {
     r = run_queries();
     k_sleep(K_SECONDS(TELEMETRY_INTERVAL_SEC));
   }
@@ -245,7 +310,8 @@ static int start_app(void) {
   return r;
 }
 
-int main(void) {
+int main(void)
+{
   LOG_INF("Magistrala HTTP Client Starting");
 
   k_sleep(K_SECONDS(5));
@@ -259,20 +325,32 @@ int main(void) {
   net_mgmt_add_event_callback(&mgmt_cb);
 
   sta_iface = net_if_get_wifi_sta();
-  if (sta_iface == NULL) {
+  if (sta_iface == NULL)
+  {
     LOG_ERR("Failed to get WiFi STA interface");
+    LOG_ERR("Restarting system in 5 seconds...");
+    k_sleep(K_SECONDS(5));
+    sys_reboot(SYS_REBOOT_COLD);
     return -ENODEV;
   }
 
   int ret = connect_to_wifi(sta_iface, WIFI_SSID, WIFI_PSK);
-  if (ret) {
+  if (ret)
+  {
     LOG_ERR("Unable to Connect to (%s)", WIFI_SSID);
+    LOG_ERR("Restarting system in 5 seconds...");
+    k_sleep(K_SECONDS(5));
+    sys_reboot(SYS_REBOOT_COLD);
     return ret;
   }
 
   ret = wait_for_ip_address(sta_iface);
-  if (ret < 0) {
+  if (ret < 0)
+  {
     LOG_ERR("Failed to get IP address: %d", ret);
+    LOG_ERR("Restarting system in 5 seconds...");
+    k_sleep(K_SECONDS(5));
+    sys_reboot(SYS_REBOOT_COLD);
     return ret;
   }
 
