@@ -21,8 +21,6 @@ LOG_MODULE_REGISTER(https_client);
 
 static struct net_if *sta_iface;
 
-#define TELEMETRY_INTERVAL_SEC 30
-
 typedef struct
 {
   double temperature;

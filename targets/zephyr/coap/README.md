@@ -1,14 +1,16 @@
-# Magistrala MQTT Client for Zephyr
+# Magistrala CoAP Client for Zephyr
 
-This is a Zephyr RTOS application that connects to a Magistrala IoT platform using MQTT protocol (non-secure) and sends telemetry data.
+This is a Zephyr RTOS application that connects to a Magistrala IoT platform using CoAP (Constrained Application Protocol) and sends telemetry data.
 
 ## Features
 
 - WiFi connectivity with automatic IP address acquisition via DHCP
-- MQTT client with QoS 0, 1, and 2 support
+- CoAP client with confirmable (CON) message support
+- UDP-based communication
+- Query parameter-based authentication
 - Simulated sensor data (temperature, humidity, battery level, LED state)
 - SenML JSON payload format
-- Automatic reconnection and error handling
+- Automatic error handling
 - Configurable telemetry interval
 
 ## Hardware Requirements
@@ -36,7 +38,7 @@ Edit `src/config.h` to configure your settings:
 
 ```c
 #define MAGISTRALA_HOSTNAME "your-magistrala-instance.com"
-#define MAGISTRALA_MQTT_PORT 1883
+#define MAGISTRALA_COAP_PORT 5683
 #define DOMAIN_ID "your-domain-id"
 #define CLIENT_ID "your-client-id"
 #define CLIENT_SECRET "your-client-secret"
@@ -73,12 +75,12 @@ Monitor serial output:
 west espressif monitor
 ```
 
-## MQTT Topic Structure
+## CoAP Resource Structure
 
-The client publishes to the following topic:
+The client sends POST requests to:
 
-```
-m/{DOMAIN_ID}/c/{CHANNEL_ID}
+```text
+coap://{MAGISTRALA_HOSTNAME}:{MAGISTRALA_COAP_PORT}/m/{DOMAIN_ID}/c/{CHANNEL_ID}?auth={CLIENT_SECRET}
 ```
 
 ## Payload Format
@@ -89,7 +91,7 @@ The client sends data in SenML JSON format:
 [
   {
     "bn": "esp32s3:",
-    "bt": 1761835000,
+    "bt": 1761700000,
     "bu": "Cel",
     "bver": 5,
     "n": "temperature",
@@ -99,7 +101,7 @@ The client sends data in SenML JSON format:
   {
     "n": "humidity",
     "u": "%RH",
-    "v": 65.3
+    "v": 65.30
   },
   {
     "n": "battery",
@@ -115,22 +117,30 @@ The client sends data in SenML JSON format:
 
 ## Authentication
 
-The client uses MQTT username/password authentication:
+The client uses CoAP URI query parameter authentication:
 
-- Username: `CLIENT_ID`
-- Password: `CLIENT_SECRET`
+- Query parameter: `auth={CLIENT_SECRET}`
 
-## QoS Levels
+## CoAP Features
 
-The client demonstrates all three MQTT QoS levels:
-
-- QoS 0: At most once delivery
-- QoS 1: At least once delivery
-- QoS 2: Exactly once delivery
+- CoAP Version 1
+- Confirmable (CON) message type
+- POST method for telemetry data
+- Token-based message correlation
+- Message ID for deduplication
+- Response timeout handling (5 seconds)
 
 ## Error Handling
 
 - Automatic system reboot on WiFi connection failure
 - Automatic system reboot on DHCP timeout
-- Connection retry mechanism with configurable attempts
-- MQTT keepalive and ping support
+- Socket creation error handling
+- CoAP packet initialization and parsing error handling
+- Response timeout handling
+
+## Protocol Details
+
+- Transport: UDP (SOCK_DGRAM)
+- Default port: 5683
+- Message format: CoAP binary
+- Payload marker support
