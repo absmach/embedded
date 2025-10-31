@@ -14,6 +14,7 @@
 #include <zephyr/net/tls_credentials.h>
 #include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/random/random.h>
+#include <zephyr/sys/reboot.h>
 
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/net_ip.h>
@@ -26,8 +27,6 @@ K_APPMEM_PARTITION_DEFINE(app_partition);
 #define SUCCESS_OR_EXIT(rc) success_or_exit(rc)
 #define SUCCESS_OR_BREAK(rc) success_or_break(rc)
 #define PROG_DELAY 5000
-#define MAX_CONNECTIONS 1
-#define MAX_ITERATIONS 10
 
 LOG_MODULE_REGISTER(mqtts_client, LOG_LEVEL_DBG);
 
@@ -50,6 +49,21 @@ static APP_BMEM bool connected;
 
 /* TLS credential tag */
 #define TLS_SEC_TAG 1
+
+char mqttTopic[150];
+
+typedef struct
+{
+  double temperature;
+  double humidity;
+  int battery_level;
+  bool led_state;
+} sensor_data_t;
+
+static sensor_data_t current_data = {.temperature = 23.5,
+                                     .humidity = 65.0,
+                                     .battery_level = 85,
+                                     .led_state = false};
 
 static void prepare_fds(struct mqtt_client *client)
 {
@@ -203,14 +217,45 @@ void mqtt_evt_handler(struct mqtt_client *const client,
   }
 }
 
+static void update_sensor_data(sensor_data_t *data)
+{
+  data->temperature = 20.0 + (sys_rand32_get() % 1000) / 100.0; // 20-30°C
+  data->humidity = 50.0 + (sys_rand32_get() % 3000) / 100.0;    // 50-80%
+  data->battery_level = 70 + (sys_rand32_get() % 30);           // 70-99%
+  data->led_state = !data->led_state;                           // Toggle LED
+}
+
 static char *get_mqtt_payload(enum mqtt_qos qos)
 {
-  static APP_DMEM char payload[64];
+  static APP_DMEM char payload[512];
+
+  update_sensor_data(&current_data);
+
+  int64_t unix_time = k_uptime_get() / 1000 + 1761835000; // Approximate Unix time
 
   snprintk(payload, sizeof(payload),
-           "{\"message\":\"hello from zephyr\",\"qos\":%d}", qos);
+           "[{\"bn\":\"esp32s3:\",\"bt\":%lld,\"bu\":\"Cel\",\"bver\":5,"
+           "\"n\":\"temperature\",\"u\":\"Cel\",\"v\":%.2f},"
+           "{\"n\":\"humidity\",\"u\":\"%%RH\",\"v\":%.2f},"
+           "{\"n\":\"battery\",\"u\":\"%%\",\"v\":%d},"
+           "{\"n\":\"led\",\"vb\":%s}]",
+           unix_time, current_data.temperature, current_data.humidity,
+           current_data.battery_level, current_data.led_state ? "true" : "false");
 
   return payload;
+}
+
+static char *get_mqtt_topic(void)
+{
+  // Construct URI path:
+  // m/{domain_id}/c/{channel_id}
+  const char *_preId = "m/";
+  const char *_postId = "/c/";
+  strcpy(mqttTopic, _preId);
+  strcat(mqttTopic, DOMAIN_ID);
+  strcat(mqttTopic, _postId);
+  strcat(mqttTopic, CHANNEL_ID);
+  return mqttTopic;
 }
 
 static int publish(struct mqtt_client *client, enum mqtt_qos qos)
@@ -218,8 +263,8 @@ static int publish(struct mqtt_client *client, enum mqtt_qos qos)
   struct mqtt_publish_param param;
 
   param.message.topic.qos = qos;
-  param.message.topic.topic.utf8 = (uint8_t *)MQTT_PUBLISH_TOPIC;
-  param.message.topic.topic.size = strlen(MQTT_PUBLISH_TOPIC);
+  param.message.topic.topic.utf8 = (uint8_t *)get_mqtt_topic();
+  param.message.topic.topic.size = strlen(param.message.topic.topic.utf8);
   param.message.payload.data = get_mqtt_payload(qos);
   param.message.payload.len = strlen(param.message.payload.data);
   param.message_id = sys_rand32_get();
@@ -231,15 +276,23 @@ static int publish(struct mqtt_client *client, enum mqtt_qos qos)
 
 static int subscribe(struct mqtt_client *client)
 {
+  static char subscribe_topic[150];
+  const char *_preId = "m/";
+  const char *_postId = "/c/";
+  strcpy(subscribe_topic, _preId);
+  strcat(subscribe_topic, DOMAIN_ID);
+  strcat(subscribe_topic, _postId);
+  strcat(subscribe_topic, CHANNEL_ID);
+
   struct mqtt_topic topics[] = {
-      {.topic = {.utf8 = (uint8_t *)MQTT_SUBSCRIBE_TOPIC,
-                 .size = strlen(MQTT_SUBSCRIBE_TOPIC)},
+      {.topic = {.utf8 = (uint8_t *)subscribe_topic,
+                 .size = strlen(subscribe_topic)},
        .qos = MQTT_QOS_1_AT_LEAST_ONCE}};
 
   const struct mqtt_subscription_list sub_list = {
       .list = topics, .list_count = 1, .message_id = 1};
 
-  LOG_INF("Subscribing to: %s", MQTT_SUBSCRIBE_TOPIC);
+  LOG_INF("Subscribing to: %s", subscribe_topic);
 
   return mqtt_subscribe(client, &sub_list);
 }
@@ -273,9 +326,9 @@ static int resolve_broker_addr(void)
       .ai_socktype = SOCK_STREAM,
   };
 
-  LOG_INF("Resolving %s...", MOSQUITTO_BROKER_HOSTNAME);
+  LOG_INF("Resolving %s...", MAGISTRALA_HOSTNAME);
 
-  ret = getaddrinfo(MOSQUITTO_BROKER_HOSTNAME, NULL, &hints, &result);
+  ret = getaddrinfo(MAGISTRALA_HOSTNAME, NULL, &hints, &result);
   if (ret != 0)
   {
     LOG_ERR("getaddrinfo failed: %d", ret);
@@ -284,11 +337,11 @@ static int resolve_broker_addr(void)
 
   struct sockaddr_in *broker4 = (struct sockaddr_in *)&broker_addr;
   memcpy(broker4, result->ai_addr, sizeof(struct sockaddr_in));
-  broker4->sin_port = htons(MOSQUITTO_BROKER_PORT);
+  broker4->sin_port = htons(MAGISTRALA_MQTTS_PORT);
 
   char addr_str[INET_ADDRSTRLEN];
   inet_ntop(AF_INET, &broker4->sin_addr, addr_str, sizeof(addr_str));
-  LOG_INF("Resolved to %s:%d", addr_str, MOSQUITTO_BROKER_PORT);
+  LOG_INF("Resolved to %s:%d", addr_str, MAGISTRALA_MQTTS_PORT);
 
   freeaddrinfo(result);
   return 0;
@@ -336,10 +389,10 @@ static void client_init(struct mqtt_client *client)
   tls_config->cipher_list = NULL;
   tls_config->sec_tag_list = sec_tls_tags;
   tls_config->sec_tag_count = ARRAY_SIZE(sec_tls_tags);
-  tls_config->hostname = MOSQUITTO_BROKER_HOSTNAME;
+  tls_config->hostname = MAGISTRALA_HOSTNAME;
   tls_config->cert_nocopy = TLS_CERT_NOCOPY_NONE;
 
-  LOG_INF("Client initialized with TLS for %s", MOSQUITTO_BROKER_HOSTNAME);
+  LOG_INF("Client initialized with TLS for %s", MAGISTRALA_HOSTNAME);
 }
 
 static int try_to_connect(struct mqtt_client *client)
@@ -574,7 +627,7 @@ int main(void)
 {
   int ret;
 
-  LOG_INF("Mosquitto MQTTS Client Starting");
+  LOG_INF("Magistrala MQTTS Client Starting");
 
   k_sleep(K_SECONDS(5));
 
@@ -592,6 +645,9 @@ int main(void)
   if (sta_iface == NULL)
   {
     LOG_ERR("Failed to get WiFi STA interface");
+    LOG_ERR("Restarting system in 5 seconds...");
+    k_sleep(K_SECONDS(5));
+    sys_reboot(SYS_REBOOT_COLD);
     return -ENODEV;
   }
 
@@ -599,6 +655,9 @@ int main(void)
   if (ret)
   {
     LOG_ERR("Unable to Connect to (%s)", WIFI_SSID);
+    LOG_ERR("Restarting system in 5 seconds...");
+    k_sleep(K_SECONDS(5));
+    sys_reboot(SYS_REBOOT_COLD);
     return ret;
   }
 
@@ -607,6 +666,9 @@ int main(void)
   if (ret < 0)
   {
     LOG_ERR("Failed to get IP address: %d", ret);
+    LOG_ERR("Restarting system in 5 seconds...");
+    k_sleep(K_SECONDS(5));
+    sys_reboot(SYS_REBOOT_COLD);
     return ret;
   }
 

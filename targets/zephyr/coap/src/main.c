@@ -21,7 +21,6 @@ static int coap_sock = -1;
 static struct sockaddr_in magistrala_addr;
 
 #define MAX_COAP_MSG_LEN 512
-#define TELEMETRY_INTERVAL_SEC 30
 
 typedef struct
 {
@@ -229,11 +228,9 @@ static int send_coap_message(const char *uri_path, const char *payload,
   return 0;
 }
 
-static int wait_for_ip_address(void)
+static int wait_for_ip_address(struct net_if *iface)
 {
   struct net_if_addr *if_addr;
-  struct net_if *iface = net_if_get_default();
-  int timeout_count = 0;
   const int max_timeout = 30; // 30 seconds max wait
 
   /* Check if we already have an IP */
@@ -362,7 +359,7 @@ int main(void)
     return ret;
   }
 
-  ret = wait_for_ip_address();
+  ret = wait_for_ip_address(sta_iface);
   if (ret < 0)
   {
     LOG_ERR("Failed to get IP address: %d", ret);

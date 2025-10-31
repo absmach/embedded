@@ -13,4 +13,7 @@
 #define CLIENT_SECRET "CLIENT_SECRET" // Replace with your Client secret
 #define CHANNEL_ID "CHANNEL_ID"       // Replace with your Channel ID
 
+/* Application Configuration */
+#define TELEMETRY_INTERVAL_SEC 30
+
 #endif
