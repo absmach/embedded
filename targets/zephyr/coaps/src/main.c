@@ -1,3 +1,4 @@
+#include "ca_cert.h"
 #include "config.h"
 #include "wifi.h"
 #include <zephyr/kernel.h>
@@ -7,12 +8,13 @@
 #include <zephyr/net/net_ip.h>
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/socket.h>
+#include <zephyr/net/tls_credentials.h>
 #include <zephyr/net/udp.h>
 #include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/random/random.h>
 #include <zephyr/sys/reboot.h>
 
-LOG_MODULE_REGISTER(coap_client);
+LOG_MODULE_REGISTER(coaps_client);
 
 static struct net_if *sta_iface;
 
@@ -22,6 +24,9 @@ static struct sockaddr_in magistrala_addr;
 
 #define MAX_COAP_MSG_LEN 512
 #define TELEMETRY_INTERVAL_SEC 30
+
+/* DTLS credential tag */
+#define DTLS_SEC_TAG 1
 
 typedef struct
 {
@@ -88,17 +93,70 @@ static void update_sensor_data(sensor_data_t *data)
   data->led_state = !data->led_state;                           // Toggle LED
 }
 
-static int coap_client_init(void)
+static int setup_dtls_credentials(void)
 {
   int ret;
 
-  /* Create UDP socket */
-  coap_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  ret = tls_credential_add(DTLS_SEC_TAG, TLS_CREDENTIAL_CA_CERTIFICATE, ca_cert,
+                           sizeof(ca_cert));
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to add CA certificate: %d", ret);
+    return ret;
+  }
+
+  LOG_INF("DTLS credentials registered");
+  return 0;
+}
+
+static int coap_client_init(void)
+{
+  int ret;
+  int proto = IPPROTO_DTLS_1_0;
+
+  LOG_INF("Using DTLS 1.2 protocol (proto=%d)", proto);
+
+  /* Create DTLS socket */
+  coap_sock = socket(AF_INET, SOCK_DGRAM, proto);
   if (coap_sock < 0)
   {
-    LOG_ERR("Failed to create CoAP socket: %d", errno);
+    LOG_ERR("Failed to create CoAPS socket (proto=%d): %d", proto, errno);
     return -errno;
   }
+
+  /* Configure DTLS socket options */
+
+  /* Set DTLS security tag */
+  sec_tag_t sec_tag_opt[] = {DTLS_SEC_TAG};
+  ret = setsockopt(coap_sock, SOL_TLS, TLS_SEC_TAG_LIST, sec_tag_opt,
+                   sizeof(sec_tag_opt));
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to set DTLS_SEC_TAG option: %d", errno);
+    close(coap_sock);
+    return -errno;
+  }
+
+  /* Set hostname for DTLS SNI */
+  ret = setsockopt(coap_sock, SOL_TLS, TLS_HOSTNAME, MAGISTRALA_HOSTNAME,
+                   strlen(MAGISTRALA_HOSTNAME));
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to set TLS_HOSTNAME option: %d", errno);
+    close(coap_sock);
+    return -errno;
+  }
+
+  int verify = TLS_PEER_VERIFY_REQUIRED;
+  ret = setsockopt(coap_sock, SOL_TLS, TLS_PEER_VERIFY, &verify, sizeof(verify));
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to set TLS_PEER_VERIFY option: %d", errno);
+    close(coap_sock);
+    return -errno;
+  }
+
+  LOG_INF("DTLS socket configured for %s (peer verify disabled)", MAGISTRALA_HOSTNAME);
 
   struct sockaddr_storage server_addr;
   ret = resolve_hostname(MAGISTRALA_HOSTNAME, &server_addr);
@@ -110,12 +168,12 @@ static int coap_client_init(void)
   }
 
   memcpy(&magistrala_addr, &server_addr, sizeof(magistrala_addr));
-  magistrala_addr.sin_port = htons(MAGISTRALA_COAP_PORT);
+  magistrala_addr.sin_port = htons(MAGISTRALA_COAPS_PORT);
 
   char addr_str[INET_ADDRSTRLEN];
   inet_ntop(AF_INET, &magistrala_addr.sin_addr, addr_str, sizeof(addr_str));
-  LOG_INF("Magistrala CoAP client initialized - %s:%d", addr_str,
-          MAGISTRALA_COAP_PORT);
+  LOG_INF("Magistrala CoAPS client initialized - %s:%d", addr_str,
+          MAGISTRALA_COAPS_PORT);
 
   return 0;
 }
@@ -194,7 +252,7 @@ static int send_coap_message(const char *uri_path, const char *payload,
     return -errno;
   }
 
-  LOG_INF("CoAP request sent to %s", uri_path);
+  LOG_INF("CoAPS request sent to %s", uri_path);
 
   /* Wait for response (with timeout) */
   struct pollfd pfd = {.fd = coap_sock, .events = POLLIN};
@@ -202,7 +260,7 @@ static int send_coap_message(const char *uri_path, const char *payload,
   ret = poll(&pfd, 1, 5000); // 5 second timeout
   if (ret <= 0)
   {
-    LOG_WRN("CoAP response timeout or error: %d", ret);
+    LOG_WRN("CoAPS response timeout or error: %d", ret);
     return -ETIMEDOUT;
   }
 
@@ -224,7 +282,7 @@ static int send_coap_message(const char *uri_path, const char *payload,
   }
 
   uint8_t response_code = coap_header_get_code(&response);
-  LOG_DBG("CoAP response code: %d", response_code);
+  LOG_DBG("CoAPS response code: %d", response_code);
 
   return 0;
 }
@@ -286,7 +344,7 @@ static int send_telemetry(void)
 
   update_sensor_data(&current_data);
 
-  int64_t unix_time = k_uptime_get() / 1000 + 1761700000; // Approximate Unix time
+  int64_t unix_time = k_uptime_get() / 1000 + 1761835000; // Approximate Unix time
 
   ret = snprintf(senml_payload, sizeof(senml_payload),
                  "[{\"bn\":\"esp32s3:\",\"bt\":%lld,\"bu\":\"Cel\",\"bver\":5,"
@@ -329,7 +387,7 @@ static int send_telemetry(void)
 
 int main(void)
 {
-  LOG_INF("Magistrala CoAP Client Starting");
+  LOG_INF("Magistrala CoAPS Client Starting");
 
   k_sleep(K_SECONDS(5));
 
@@ -372,12 +430,23 @@ int main(void)
     return ret;
   }
 
+  /* Add a small delay to ensure network is fully ready */
+  k_sleep(K_SECONDS(2));
+
+  /* Setup DTLS credentials */
+  ret = setup_dtls_credentials();
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to setup DTLS credentials: %d", ret);
+    return ret;
+  }
+
   LOG_INF("Will send telemetry every %d seconds", TELEMETRY_INTERVAL_SEC);
 
   ret = coap_client_init();
   if (ret < 0)
   {
-    LOG_ERR("Failed to initialize CoAP client: %d", ret);
+    LOG_ERR("Failed to initialize CoAPS client: %d", ret);
     return ret;
   }
 
