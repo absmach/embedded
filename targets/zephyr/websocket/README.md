@@ -1,14 +1,16 @@
-# Magistrala MQTT Client for Zephyr
+# Magistrala WebSocket Client for Zephyr
 
-This is a Zephyr RTOS application that connects to a Magistrala IoT platform using MQTT protocol (non-secure) and sends telemetry data.
+This is a Zephyr RTOS application that connects to a Magistrala IoT platform using WebSocket protocol and sends telemetry data.
 
 ## Features
 
 - WiFi connectivity with automatic IP address acquisition via DHCP
-- MQTT client with QoS 0, 1, and 2 support
+- WebSocket client with text frame support
+- Persistent bidirectional communication
+- Query parameter-based authentication
 - Simulated sensor data (temperature, humidity, battery level, LED state)
 - SenML JSON payload format
-- Automatic reconnection and error handling
+- Automatic error handling
 - Configurable telemetry interval
 
 ## Hardware Requirements
@@ -36,7 +38,7 @@ Edit `src/config.h` to configure your settings:
 
 ```c
 #define MAGISTRALA_HOSTNAME "your-magistrala-instance.com"
-#define MAGISTRALA_MQTT_PORT 1883
+#define MAGISTRALA_WS_PORT 8186
 #define DOMAIN_ID "your-domain-id"
 #define CLIENT_ID "your-client-id"
 #define CLIENT_SECRET "your-client-secret"
@@ -73,12 +75,12 @@ Monitor serial output:
 west espressif monitor
 ```
 
-## MQTT Topic Structure
+## WebSocket Connection Structure
 
-The client publishes to the following topic:
+The client connects to:
 
-```
-m/{DOMAIN_ID}/c/{CHANNEL_ID}
+```text
+ws://{MAGISTRALA_HOSTNAME}:{MAGISTRALA_WS_PORT}/m/{DOMAIN_ID}/c/{CHANNEL_ID}?authorization={CLIENT_SECRET}
 ```
 
 ## Payload Format
@@ -99,7 +101,7 @@ The client sends data in SenML JSON format:
   {
     "n": "humidity",
     "u": "%RH",
-    "v": 65.3
+    "v": 65.30
   },
   {
     "n": "battery",
@@ -115,22 +117,39 @@ The client sends data in SenML JSON format:
 
 ## Authentication
 
-The client uses MQTT username/password authentication:
+The client uses WebSocket URI query parameter authentication:
 
-- Username: `CLIENT_ID`
-- Password: `CLIENT_SECRET`
+- Query parameter: `authorization={CLIENT_SECRET}`
 
-## QoS Levels
+## WebSocket Features
 
-The client demonstrates all three MQTT QoS levels:
-
-- QoS 0: At most once delivery
-- QoS 1: At least once delivery
-- QoS 2: Exactly once delivery
+- WebSocket protocol upgrade from HTTP
+- Text data frames (WEBSOCKET_OPCODE_DATA_TEXT)
+- Final frame flag support
+- Persistent connection for continuous data transmission
+- Custom headers support (Origin header)
+- Connection callback for status monitoring
 
 ## Error Handling
 
 - Automatic system reboot on WiFi connection failure
 - Automatic system reboot on DHCP timeout
-- Connection retry mechanism with configurable attempts
-- MQTT keepalive and ping support
+- Socket creation and connection error handling
+- WebSocket handshake error handling
+- Send error detection with connection break
+
+## Protocol Details
+
+- Transport: TCP (SOCK_STREAM)
+- WebSocket upgrade via HTTP/1.1
+- Frame masking (required for client-to-server)
+- Text data frames
+- Continuous connection mode
+- Temporary buffer for WebSocket framing (512 + 30 bytes)
+
+## Connection Management
+
+- Single persistent WebSocket connection
+- Continuous telemetry transmission
+- Graceful connection closure on error
+- Automatic resource cleanup (socket closure)
