@@ -7,7 +7,7 @@
 
 /* Magistrala Configuration */
 #define MAGISTRALA_HOSTNAME "MAGISTRALA_HOSTNAME" // Replace with your Magistrala instance hostname or IP
-#define MAGISTRALA_WS_PORT 8186
+#define MAGISTRALA_COAPS_PORT 5684
 #define DOMAIN_ID "DOMAIN_ID"         // Replace with your Domain ID
 #define CLIENT_ID "CLIENT_ID"         // Replace with your Client ID
 #define CLIENT_SECRET "CLIENT_SECRET" // Replace with your Client secret

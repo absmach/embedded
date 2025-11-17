@@ -1,11 +1,11 @@
-# Magistrala MQTT Client for Zephyr
+# Magistrala HTTP Client for Zephyr
 
-This is a Zephyr RTOS application that connects to a Magistrala IoT platform using MQTT protocol (non-secure) and sends telemetry data.
+This is a Zephyr RTOS application that connects to a Magistrala IoT platform using HTTP protocol and sends telemetry data.
 
 ## Features
 
 - WiFi connectivity with automatic IP address acquisition via DHCP
-- MQTT client with QoS 0, 1, and 2 support
+- HTTP client with POST support
 - Simulated sensor data (temperature, humidity, battery level, LED state)
 - SenML JSON payload format
 - Automatic reconnection and error handling
@@ -36,7 +36,7 @@ Edit `src/config.h` to configure your settings:
 
 ```c
 #define MAGISTRALA_HOSTNAME "your-magistrala-instance.com"
-#define MAGISTRALA_MQTT_PORT 1883
+#define MAGISTRALA_HTTP_PORT 80
 #define DOMAIN_ID "your-domain-id"
 #define CLIENT_ID "your-client-id"
 #define CLIENT_SECRET "your-client-secret"
@@ -73,12 +73,12 @@ Monitor serial output:
 west espressif monitor
 ```
 
-## MQTT Topic Structure
+## HTTP Endpoint Structure
 
-The client publishes to the following topic:
+The client sends POST requests to:
 
-```
-m/{DOMAIN_ID}/c/{CHANNEL_ID}
+```text
+/m/{DOMAIN_ID}/c/{CHANNEL_ID}
 ```
 
 ## Payload Format
@@ -89,7 +89,7 @@ The client sends data in SenML JSON format:
 [
   {
     "bn": "esp32s3:",
-    "bt": 1761835000,
+    "bt": 1761700000,
     "bu": "Cel",
     "bver": 5,
     "n": "temperature",
@@ -99,7 +99,7 @@ The client sends data in SenML JSON format:
   {
     "n": "humidity",
     "u": "%RH",
-    "v": 65.3
+    "v": 65.30
   },
   {
     "n": "battery",
@@ -115,22 +115,21 @@ The client sends data in SenML JSON format:
 
 ## Authentication
 
-The client uses MQTT username/password authentication:
+The client uses HTTP header-based authentication:
 
-- Username: `CLIENT_ID`
-- Password: `CLIENT_SECRET`
-
-## QoS Levels
-
-The client demonstrates all three MQTT QoS levels:
-
-- QoS 0: At most once delivery
-- QoS 1: At least once delivery
-- QoS 2: Exactly once delivery
+- Header: `Authorization: Client {CLIENT_SECRET}`
+- Content-Type: `application/senml+json`
 
 ## Error Handling
 
 - Automatic system reboot on WiFi connection failure
 - Automatic system reboot on DHCP timeout
-- Connection retry mechanism with configurable attempts
-- MQTT keepalive and ping support
+- Connection timeout handling (3 seconds)
+- Socket creation and connection error handling
+
+## HTTP Features
+
+- HTTP/1.1 protocol
+- POST method for telemetry data
+- Content-Type and Authorization headers
+- Response callback for status checking

@@ -1,14 +1,18 @@
-# Magistrala MQTT Client for Zephyr
+# Magistrala CoAPS Client for Zephyr
 
-This is a Zephyr RTOS application that connects to a Magistrala IoT platform using MQTT protocol (non-secure) and sends telemetry data.
+This is a Zephyr RTOS application that connects to a Magistrala IoT platform using CoAPS (CoAP over DTLS) and sends telemetry data.
 
 ## Features
 
 - WiFi connectivity with automatic IP address acquisition via DHCP
-- MQTT client with QoS 0, 1, and 2 support
+- Secure CoAP client with DTLS encryption
+- CoAP with confirmable (CON) message support
+- UDP-based communication with DTLS security
+- Certificate-based server authentication
+- Query parameter-based authentication
 - Simulated sensor data (temperature, humidity, battery level, LED state)
 - SenML JSON payload format
-- Automatic reconnection and error handling
+- Automatic error handling
 - Configurable telemetry interval
 
 ## Hardware Requirements
@@ -20,6 +24,7 @@ This is a Zephyr RTOS application that connects to a Magistrala IoT platform usi
 
 1. Magistrala broker details including: hostname, Domain ID, Client ID, Client Secret and Channel ID
 2. [Zephyr](https://www.zephyrproject.org/)
+3. CA certificate for DTLS verification (provided in `src/ca_cert.h`)
 
 ## Configuration
 
@@ -36,7 +41,7 @@ Edit `src/config.h` to configure your settings:
 
 ```c
 #define MAGISTRALA_HOSTNAME "your-magistrala-instance.com"
-#define MAGISTRALA_MQTT_PORT 1883
+#define MAGISTRALA_COAPS_PORT 5684
 #define DOMAIN_ID "your-domain-id"
 #define CLIENT_ID "your-client-id"
 #define CLIENT_SECRET "your-client-secret"
@@ -48,6 +53,10 @@ Edit `src/config.h` to configure your settings:
 ```c
 #define TELEMETRY_INTERVAL_SEC 30  // Telemetry send interval in seconds
 ```
+
+### DTLS Certificate
+
+Update `src/ca_cert.h` with your Magistrala server's CA certificate.
 
 ## Build
 
@@ -73,12 +82,12 @@ Monitor serial output:
 west espressif monitor
 ```
 
-## MQTT Topic Structure
+## CoAPS Resource Structure
 
-The client publishes to the following topic:
+The client sends POST requests to:
 
-```
-m/{DOMAIN_ID}/c/{CHANNEL_ID}
+```text
+coaps://{MAGISTRALA_HOSTNAME}:{MAGISTRALA_COAPS_PORT}/m/{DOMAIN_ID}/c/{CHANNEL_ID}?auth={CLIENT_SECRET}
 ```
 
 ## Payload Format
@@ -99,7 +108,7 @@ The client sends data in SenML JSON format:
   {
     "n": "humidity",
     "u": "%RH",
-    "v": 65.3
+    "v": 65.30
   },
   {
     "n": "battery",
@@ -115,22 +124,41 @@ The client sends data in SenML JSON format:
 
 ## Authentication
 
-The client uses MQTT username/password authentication:
+The client uses CoAP URI query parameter authentication over DTLS:
 
-- Username: `CLIENT_ID`
-- Password: `CLIENT_SECRET`
+- Query parameter: `auth={CLIENT_SECRET}`
+- DTLS: Server certificate verification with CA certificate
 
-## QoS Levels
+## Security
 
-The client demonstrates all three MQTT QoS levels:
+- DTLS 1.0/1.2 encryption
+- Server certificate verification (TLS_PEER_VERIFY_REQUIRED)
+- CA certificate validation
+- SNI (Server Name Indication) support
 
-- QoS 0: At most once delivery
-- QoS 1: At least once delivery
-- QoS 2: Exactly once delivery
+## CoAPS Features
+
+- CoAP Version 1 over DTLS
+- Confirmable (CON) message type
+- POST method for telemetry data
+- Token-based message correlation
+- Message ID for deduplication
+- Response timeout handling (5 seconds)
+- DTLS handshake
 
 ## Error Handling
 
 - Automatic system reboot on WiFi connection failure
 - Automatic system reboot on DHCP timeout
-- Connection retry mechanism with configurable attempts
-- MQTT keepalive and ping support
+- Socket creation error handling
+- DTLS handshake error handling
+- CoAP packet initialization and parsing error handling
+- Response timeout handling
+
+## Protocol Details
+
+- Transport: UDP with DTLS (SOCK_DGRAM + IPPROTO_DTLS_1_0)
+- Default port: 5684
+- Message format: CoAP binary over DTLS
+- Payload marker support
+- Security tag for DTLS credentials

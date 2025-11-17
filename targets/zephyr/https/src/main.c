@@ -3,10 +3,12 @@
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/socket.h>
 #include <zephyr/net/wifi_mgmt.h>
-#include <zephyr/net/http/client.h>
 #include <zephyr/sys/reboot.h>
+
+#include "ca_cert.h"
 #include "config.h"
 #include "wifi.h"
+#include <zephyr/net/http/client.h>
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/net_ip.h>
 #include <zephyr/net/net_mgmt.h>
@@ -15,7 +17,7 @@
 #include <zephyr/net/udp.h>
 #include <zephyr/random/random.h>
 
-LOG_MODULE_REGISTER(http_client);
+LOG_MODULE_REGISTER(https_client);
 
 static struct net_if *sta_iface;
 
@@ -40,6 +42,9 @@ static K_SEM_DEFINE(dhcp_sem, 0, 1);
 static uint8_t recv_buf_ipv4[MAX_RECV_BUF_LEN];
 static uint8_t recv_buf_ipv6[MAX_RECV_BUF_LEN];
 
+/* TLS credential tag */
+#define TLS_SEC_TAG 1
+
 static void net_mgmt_event_handler(struct net_mgmt_event_callback *cb,
                                    uint32_t mgmt_event, struct net_if *iface)
 {
@@ -53,7 +58,7 @@ static void net_mgmt_event_handler(struct net_mgmt_event_callback *cb,
 static int wait_for_ip_address(struct net_if *iface)
 {
   struct net_if_addr *if_addr;
-  const int max_timeout = 30;
+  const int max_timeout = 30; // 30 seconds max wait
 
   if_addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
   if (if_addr)
@@ -94,6 +99,22 @@ static int wait_for_ip_address(struct net_if *iface)
   return -1;
 }
 
+static int setup_tls_credentials(void)
+{
+  int ret;
+
+  ret = tls_credential_add(TLS_SEC_TAG, TLS_CREDENTIAL_CA_CERTIFICATE, ca_cert,
+                           sizeof(ca_cert));
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to add CA certificate: %d", ret);
+    return ret;
+  }
+
+  LOG_INF("TLS credentials registered");
+  return 0;
+}
+
 static int resolve_hostname(const char *hostname,
                             struct sockaddr_storage *addr)
 {
@@ -128,13 +149,46 @@ static int setup_socket(int *sock)
 {
   int ret = 0;
 
-  *sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  *sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TLS_1_2);
 
   if (*sock < 0)
   {
-    LOG_ERR("Failed to create HTTP socket (%d)", -errno);
-    ret = -errno;
+    LOG_ERR("Failed to create HTTPS socket (%d)", -errno);
+    return -errno;
   }
+
+  /* Set TLS security tag */
+  sec_tag_t sec_tag_opt[] = {TLS_SEC_TAG};
+  ret = setsockopt(*sock, SOL_TLS, TLS_SEC_TAG_LIST, sec_tag_opt,
+                   sizeof(sec_tag_opt));
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to set TLS_SEC_TAG option: %d", errno);
+    close(*sock);
+    return -errno;
+  }
+
+  /* Set hostname for TLS SNI */
+  ret = setsockopt(*sock, SOL_TLS, TLS_HOSTNAME, MAGISTRALA_HOSTNAME,
+                   strlen(MAGISTRALA_HOSTNAME));
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to set TLS_HOSTNAME option: %d", errno);
+    close(*sock);
+    return -errno;
+  }
+
+  /* Set peer verification */
+  int verify = TLS_PEER_VERIFY_REQUIRED;
+  ret = setsockopt(*sock, SOL_TLS, TLS_PEER_VERIFY, &verify, sizeof(verify));
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to set TLS_PEER_VERIFY option: %d", errno);
+    close(*sock);
+    return -errno;
+  }
+
+  LOG_INF("TLS socket configured for %s", MAGISTRALA_HOSTNAME);
 
   return ret;
 }
@@ -202,7 +256,7 @@ static int connect_socket(int *sock, struct sockaddr_storage *addr)
   }
   else
   {
-    LOG_INF("Connected successfully");
+    LOG_INF("Connected successfully via TLS");
   }
 
   return ret;
@@ -232,16 +286,16 @@ static int run_queries(void)
       LOG_ERR("Failed to resolve hostname: %d", ret);
       return ret;
     }
-
     ((struct sockaddr_in *)&server_addr)->sin_port =
-        htons(MAGISTRALA_HTTP_PORT);
+        htons(MAGISTRALA_HTTPS_PORT);
     addr_resolved = true;
   }
 
+  /* Create socket and connect */
   ret = connect_socket(&sock, &server_addr);
   if (ret < 0 || sock < 0)
   {
-    LOG_ERR("Cannot create HTTP connection for SenML telemetry.");
+    LOG_ERR("Cannot create HTTPS connection for SenML telemetry.");
     return -ECONNABORTED;
   }
 
@@ -272,9 +326,9 @@ static int run_queries(void)
   const char *headers[] = {"Content-Type: application/senml+json\r\n",
                            auth_header, NULL};
 
-  // Prepare URL m/domain/c/channel
+  // Prepare URL /api/http/m/domain/c/channel
   char url[256];
-  snprintf(url, sizeof(url), "/m/%s/c/%s", DOMAIN_ID, CHANNEL_ID);
+  snprintf(url, sizeof(url), "/api/http/m/%s/c/%s", DOMAIN_ID, CHANNEL_ID);
 
   memset(&req, 0, sizeof(req));
   req.method = HTTP_POST;
@@ -310,7 +364,7 @@ static int start_app(void)
 
 int main(void)
 {
-  LOG_INF("Magistrala HTTP Client Starting");
+  LOG_INF("Magistrala HTTPS Client Starting");
 
   k_sleep(K_SECONDS(5));
 
@@ -349,6 +403,16 @@ int main(void)
     LOG_ERR("Restarting system in 5 seconds...");
     k_sleep(K_SECONDS(5));
     sys_reboot(SYS_REBOOT_COLD);
+    return ret;
+  }
+
+  /* Add a small delay to ensure network is fully ready */
+  k_sleep(K_SECONDS(2));
+
+  ret = setup_tls_credentials();
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to setup TLS credentials: %d", ret);
     return ret;
   }
 
