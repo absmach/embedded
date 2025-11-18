@@ -1,0 +1,14 @@
+/*
+ * Enable USB Serial/JTAG for console output on ESP32-C6
+ */
+
+&usb_serial {
+	status = "okay";
+};
+
+/ {
+	chosen {
+		zephyr,console = &usb_serial;
+		zephyr,shell-uart = &usb_serial;
+	};
+};
