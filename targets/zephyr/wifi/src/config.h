@@ -9,7 +9,7 @@
 	 NET_EVENT_WIFI_AP_STA_CONNECTED | NET_EVENT_WIFI_AP_STA_DISCONNECTED)
 
 /* AP Mode Configuration */
-#define WIFI_AP_SSID       "M0-AP"
+#define WIFI_AP_SSID       "S0-AP"
 #define WIFI_AP_PSK        ""
 #define WIFI_AP_IP_ADDRESS "192.168.4.1"
 #define WIFI_AP_NETMASK    "255.255.255.0"
