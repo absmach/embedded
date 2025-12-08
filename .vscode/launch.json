@@ -1,0 +1,88 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "ESP32-C6 USB JTAG Debug",
+			"type": "cppdbg",
+			"request": "launch",
+			"program": "${workspaceFolder}/targets/esp-idf/debug/build/debug.elf",
+			"args": [],
+			"cwd": "${workspaceFolder}",
+			"environment": [
+				{
+					"name": "PATH",
+					"value": "${config:esp_dev_env_path}:${env:PATH}"
+				}
+			],
+			"externalConsole": false,
+			"MIMode": "gdb",
+			"miDebuggerPath": "${config:esp_toolchain_path}/riscv32-esp-elf-gdb",
+			"miDebuggerServerAddress": ":3333",
+			"useExtendedRemote": true,
+			"debugServerPath": "${config:esp_openocd_path}/openocd",
+			"debugServerArgs": "-f interface/esp_usb_jtag.cfg -f target/esp32c6.cfg",
+			"serverStarted": "Listening on port [0-9]+ for gdb connections",
+			"filterStderr": true,
+			"filterStdout": false,
+			"launchCompleteCommand": "exec-continue",
+			"setupCommands": [
+				{
+					"description": "Enable pretty-printing for gdb",
+					"text": "-enable-pretty-printing",
+					"ignoreFailures": true
+				}
+			],
+			"postRemoteConnectCommands": [
+				{
+					"description": "Set Hardware Watchpoint Limit",
+					"text": "set remote hardware-watchpoint-limit 4",
+					"ignoreFailures": false
+				},
+				{
+					"description": "Set Breakpoint at app_main",
+					"text": "break app_main",
+					"ignoreFailures": false
+				},
+				{
+					"description": "Reset and Halt Target",
+					"text": "monitor reset halt",
+					"ignoreFailures": false
+				},
+				{
+					"description": "Flash Bootloader",
+					"text": "monitor program_esp ${workspaceFolder}/targets/esp-idf/debug/build/bootloader/bootloader.bin 0x0 verify",
+					"ignoreFailures": false
+				},
+				{
+					"description": "Flash Partition Table",
+					"text": "monitor program_esp ${workspaceFolder}/targets/esp-idf/debug/build/partition_table/partition-table.bin 0x8000 verify",
+					"ignoreFailures": false
+				},
+				{
+					"description": "Flash Application",
+					"text": "monitor program_esp ${workspaceFolder}/targets/esp-idf/debug/build/debug.bin 0x10000 verify",
+					"ignoreFailures": false
+				},
+				{
+					"description": "Reset and Run",
+					"text": "monitor reset halt",
+					"ignoreFailures": false
+				},
+				{
+					"description": "Maintain Target State",
+					"text": "maintenance flush register-cache",
+					"ignoreFailures": true
+				}
+			],
+			"stopAtConnect": false,
+			"logging": {
+				"exceptions": true,
+				"engineLogging": false,
+				"moduleLoad": true,
+				"programOutput": true,
+				"trace": true,
+				"traceResponse": false
+			}
+		}
+	]
+}

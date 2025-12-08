@@ -1,0 +1,17 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Flash Application via OpenOCD (ESP-Prog)",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "${config:esp_dev_env_path}:${env:PATH}"
+                }
+            },
+            "command": "openocd -f interface/ftdi/esp32_devkitj_v1.cfg -f target/esp32.cfg -c \"program_esp targets/esp-idf/debug/build/debug.bin 0x10000 verify reset exit\" ",
+            "problemMatcher": []
+        },
+    ]
+}
