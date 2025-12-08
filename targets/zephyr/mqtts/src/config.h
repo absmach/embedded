@@ -1,24 +1,25 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define MQTT_CLIENTID ""
-#define SNTP_SERVER "0.pool.ntp.org"
-#define BROKER ""
-#define BROKER_PORT "8883"
-#define MQTT_BUFFER_SIZE 256u
-#define APP_BUFFER_SIZE 4096u
-#define MAX_RETRIES 10u
-#define BACKOFF_EXP_BASE_MS 1000u
-#define BACKOFF_EXP_MAX_MS 60000u
-#define BACKOFF_CONST_MS 5000u
-#define KEEP_ALIVE 60
-#define TOPIC_BUFFER_SIZE 128
+/* STA Mode Configuration */
+#define WIFI_SSID "SSID"    // Replace `SSID` with WiFi ssid
+#define WIFI_PSK "PASSWORD" // Replace `PASSWORD` with Router password
 
-const char *mgThingId = " ";
-const char *mgThingKey = " ";
-const char *mgChannelId = " ";
-char mgTopic[TOPIC_BUFFER_SIZE];
+/* Magistrala Configuration */
+#define MAGISTRALA_HOSTNAME "MAGISTRALA_HOSTNAME" // Replace with your Magistrala instance hostname or IP
+#define MAGISTRALA_MQTTS_PORT 8883
+#define DOMAIN_ID "DOMAIN_ID"         // Replace with your Domain ID
+#define CLIENT_ID "CLIENT_ID"         // Replace with your Client ID
+#define CLIENT_SECRET "CLIENT_SECRET" // Replace with your Client secret
+#define CHANNEL_ID "CHANNEL_ID"       // Replace with your Channel ID
 
-const char *brokername = ""
+/* Application Configuration */
+#define APP_MQTT_BUFFER_SIZE 1024
+#define APP_CONNECT_TRIES 3
+#define APP_CONNECT_TIMEOUT_MS 5000
+#define APP_SLEEP_MSECS 1000
+#define TELEMETRY_INTERVAL_SEC 30
+#define MAX_ITERATIONS 10
+#define MAX_CONNECTIONS 1
 
 #endif

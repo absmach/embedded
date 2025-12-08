@@ -10,6 +10,7 @@
 #include <zephyr/net/udp.h>
 #include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/random/random.h>
+#include <zephyr/sys/reboot.h>
 
 LOG_MODULE_REGISTER(coap_client);
 
@@ -20,9 +21,9 @@ static int coap_sock = -1;
 static struct sockaddr_in magistrala_addr;
 
 #define MAX_COAP_MSG_LEN 512
-#define TELEMETRY_INTERVAL_SEC 30
 
-typedef struct {
+typedef struct
+{
   double temperature;
   double humidity;
   int battery_level;
@@ -39,42 +40,88 @@ static struct net_mgmt_event_callback mgmt_cb;
 static K_SEM_DEFINE(dhcp_sem, 0, 1);
 
 static void net_mgmt_event_handler(struct net_mgmt_event_callback *cb,
-                                   uint32_t mgmt_event, struct net_if *iface) {
-  if (mgmt_event == NET_EVENT_IPV4_DHCP_BOUND) {
+                                   uint32_t mgmt_event, struct net_if *iface)
+{
+  if (mgmt_event == NET_EVENT_IPV4_DHCP_BOUND)
+  {
     LOG_INF("DHCP bound - got IP address");
     k_sem_give(&dhcp_sem);
   }
 }
 
-static int coap_client_init(void) {
+static int resolve_hostname(const char *hostname,
+                            struct sockaddr_storage *addr)
+{
+  int ret;
+  struct addrinfo *result;
+  struct addrinfo hints = {
+      .ai_family = AF_INET,
+      .ai_socktype = SOCK_DGRAM,
+  };
+
+  LOG_INF("Resolving %s...", hostname);
+
+  ret = getaddrinfo(hostname, NULL, &hints, &result);
+  if (ret != 0)
+  {
+    LOG_ERR("getaddrinfo failed: %d", ret);
+    return -EINVAL;
+  }
+
+  struct sockaddr_in *addr4 = (struct sockaddr_in *)addr;
+  memcpy(addr4, result->ai_addr, sizeof(struct sockaddr_in));
+
+  char addr_str[INET_ADDRSTRLEN];
+  inet_ntop(AF_INET, &addr4->sin_addr, addr_str, sizeof(addr_str));
+  LOG_INF("Resolved to %s", addr_str);
+
+  freeaddrinfo(result);
+  return 0;
+}
+
+static void update_sensor_data(sensor_data_t *data)
+{
+  data->temperature = 20.0 + (sys_rand32_get() % 1000) / 100.0; // 20-30°C
+  data->humidity = 50.0 + (sys_rand32_get() % 3000) / 100.0;    // 50-80%
+  data->battery_level = 70 + (sys_rand32_get() % 30);           // 70-99%
+  data->led_state = !data->led_state;                           // Toggle LED
+}
+
+static int coap_client_init(void)
+{
   int ret;
 
   /* Create UDP socket */
   coap_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-  if (coap_sock < 0) {
+  if (coap_sock < 0)
+  {
     LOG_ERR("Failed to create CoAP socket: %d", errno);
     return -errno;
   }
 
-  memset(&magistrala_addr, 0, sizeof(magistrala_addr));
-  magistrala_addr.sin_family = AF_INET;
-  magistrala_addr.sin_port = htons(MAGISTRALA_COAP_PORT);
-
-  ret = inet_pton(AF_INET, MAGISTRALA_IP, &magistrala_addr.sin_addr);
-  if (ret != 1) {
-    LOG_ERR("Invalid IP address: %s", MAGISTRALA_IP);
+  struct sockaddr_storage server_addr;
+  ret = resolve_hostname(MAGISTRALA_HOSTNAME, &server_addr);
+  if (ret < 0)
+  {
+    LOG_ERR("Failed to resolve hostname: %d", ret);
     close(coap_sock);
-    return -EINVAL;
+    return ret;
   }
 
-  LOG_INF("Magistrala CoAP client initialized - IP: %s:%d", MAGISTRALA_IP,
+  memcpy(&magistrala_addr, &server_addr, sizeof(magistrala_addr));
+  magistrala_addr.sin_port = htons(MAGISTRALA_COAP_PORT);
+
+  char addr_str[INET_ADDRSTRLEN];
+  inet_ntop(AF_INET, &magistrala_addr.sin_addr, addr_str, sizeof(addr_str));
+  LOG_INF("Magistrala CoAP client initialized - %s:%d", addr_str,
           MAGISTRALA_COAP_PORT);
 
   return 0;
 }
 
 static int send_coap_message(const char *uri_path, const char *payload,
-                             size_t payload_len) {
+                             size_t payload_len)
+{
   static uint8_t request_buf[MAX_COAP_MSG_LEN];
   static uint8_t response_buf[MAX_COAP_MSG_LEN];
   struct coap_packet request, response;
@@ -86,7 +133,8 @@ static int send_coap_message(const char *uri_path, const char *payload,
   ret = coap_packet_init(&request, request_buf, sizeof(request_buf),
                          COAP_VERSION_1, COAP_TYPE_CON, COAP_TOKEN_MAX_LEN,
                          coap_next_token(), COAP_METHOD_POST, coap_next_id());
-  if (ret < 0) {
+  if (ret < 0)
+  {
     LOG_ERR("Failed to init CoAP request: %d", ret);
     return ret;
   }
@@ -94,7 +142,8 @@ static int send_coap_message(const char *uri_path, const char *payload,
   /* Add URI path */
   ret = coap_packet_append_option(&request, COAP_OPTION_URI_PATH, uri_path,
                                   strlen(uri_path));
-  if (ret < 0) {
+  if (ret < 0)
+  {
     LOG_ERR("Failed to add URI path: %d", ret);
     return ret;
   }
@@ -102,29 +151,34 @@ static int send_coap_message(const char *uri_path, const char *payload,
   /* Add authorization header with Client secret */
   char auth_query[128];
   ret = snprintf(auth_query, sizeof(auth_query), "auth=%s", CLIENT_SECRET);
-  if (ret >= sizeof(auth_query)) {
+  if (ret >= sizeof(auth_query))
+  {
     LOG_ERR("URI path too large");
     return -E2BIG;
   }
 
   ret = coap_packet_append_option(&request, COAP_OPTION_URI_QUERY, auth_query,
                                   strlen(auth_query));
-  if (ret < 0) {
+  if (ret < 0)
+  {
     LOG_ERR("Failed to add auth query: %d", ret);
     return ret;
   }
 
   /* Add content format for JSON */
-  if (payload && payload_len > 0) {
+  if (payload && payload_len > 0)
+  {
     /* Add payload */
     ret = coap_packet_append_payload_marker(&request);
-    if (ret < 0) {
+    if (ret < 0)
+    {
       LOG_ERR("Failed to add payload marker: %d", ret);
       return ret;
     }
 
     ret = coap_packet_append_payload(&request, payload, payload_len);
-    if (ret < 0) {
+    if (ret < 0)
+    {
       LOG_ERR("Failed to add payload: %d", ret);
       return ret;
     }
@@ -133,7 +187,8 @@ static int send_coap_message(const char *uri_path, const char *payload,
   /* Send request */
   ret = sendto(coap_sock, request_buf, request.offset, 0,
                (struct sockaddr *)&magistrala_addr, sizeof(magistrala_addr));
-  if (ret < 0) {
+  if (ret < 0)
+  {
     LOG_ERR("Failed to send CoAP request: %d", errno);
     return -errno;
   }
@@ -144,7 +199,8 @@ static int send_coap_message(const char *uri_path, const char *payload,
   struct pollfd pfd = {.fd = coap_sock, .events = POLLIN};
 
   ret = poll(&pfd, 1, 5000); // 5 second timeout
-  if (ret <= 0) {
+  if (ret <= 0)
+  {
     LOG_WRN("CoAP response timeout or error: %d", ret);
     return -ETIMEDOUT;
   }
@@ -152,14 +208,16 @@ static int send_coap_message(const char *uri_path, const char *payload,
   /* Receive response */
   recv_len = recvfrom(coap_sock, response_buf, sizeof(response_buf), 0,
                       (struct sockaddr *)&recv_addr, &recv_addr_len);
-  if (recv_len < 0) {
+  if (recv_len < 0)
+  {
     LOG_ERR("Failed to receive CoAP response: %d", errno);
     return -errno;
   }
 
   /* Parse response */
   ret = coap_packet_parse(&response, response_buf, recv_len, NULL, 0);
-  if (ret < 0) {
+  if (ret < 0)
+  {
     LOG_ERR("Failed to parse CoAP response: %d", ret);
     return ret;
   }
@@ -170,15 +228,15 @@ static int send_coap_message(const char *uri_path, const char *payload,
   return 0;
 }
 
-static int wait_for_ip_address(void) {
+static int wait_for_ip_address(struct net_if *iface)
+{
   struct net_if_addr *if_addr;
-  struct net_if *iface = net_if_get_default();
-  int timeout_count = 0;
   const int max_timeout = 30; // 30 seconds max wait
 
   /* Check if we already have an IP */
   if_addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
-  if (if_addr) {
+  if (if_addr)
+  {
     char addr_str[NET_IPV4_ADDR_LEN];
     net_addr_ntop(AF_INET, &if_addr->address.in_addr, addr_str,
                   sizeof(addr_str));
@@ -190,12 +248,14 @@ static int wait_for_ip_address(void) {
 
   /* Wait for DHCP with timeout */
   int ret = k_sem_take(&dhcp_sem, K_SECONDS(max_timeout));
-  if (ret != 0) {
+  if (ret != 0)
+  {
     LOG_ERR("Timeout waiting for DHCP - checking if we have IP anyway");
 
     /* Final check if we somehow got an IP */
     if_addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
-    if (!if_addr) {
+    if (!if_addr)
+    {
       LOG_ERR("No IP address available");
       return -ETIMEDOUT;
     }
@@ -203,7 +263,8 @@ static int wait_for_ip_address(void) {
 
   /* Verify we have a valid IP */
   if_addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
-  if (if_addr) {
+  if (if_addr)
+  {
     char addr_str[NET_IPV4_ADDR_LEN];
     net_addr_ntop(AF_INET, &if_addr->address.in_addr, addr_str,
                   sizeof(addr_str));
@@ -215,24 +276,27 @@ static int wait_for_ip_address(void) {
   return -1;
 }
 
-static int send_telemetry(void) {
-  char json_payload[256];
+static int send_telemetry(void)
+{
+  char senml_payload[512];
   int ret;
 
-  ret = snprintf(json_payload, sizeof(json_payload),
-                 "{"
-                 "\"temperature\":%.1f,"
-                 "\"humidity\":%.1f,"
-                 "\"battery\":%d,"
-                 "\"led_state\":%s,"
-                 "\"timestamp\":%lld"
-                 "}",
-                 current_data.temperature, current_data.humidity,
-                 current_data.battery_level,
-                 current_data.led_state ? "true" : "false", k_uptime_get());
+  update_sensor_data(&current_data);
 
-  if (ret >= sizeof(json_payload)) {
-    LOG_ERR("JSON payload too large");
+  int64_t unix_time = k_uptime_get() / 1000 + 1761700000; // Approximate Unix time
+
+  ret = snprintf(senml_payload, sizeof(senml_payload),
+                 "[{\"bn\":\"esp32s3:\",\"bt\":%lld,\"bu\":\"Cel\",\"bver\":5,"
+                 "\"n\":\"temperature\",\"u\":\"Cel\",\"v\":%.2f},"
+                 "{\"n\":\"humidity\",\"u\":\"%%RH\",\"v\":%.2f},"
+                 "{\"n\":\"battery\",\"u\":\"%%\",\"v\":%d},"
+                 "{\"n\":\"led\",\"vb\":%s}]",
+                 unix_time, current_data.temperature, current_data.humidity,
+                 current_data.battery_level, current_data.led_state ? "true" : "false");
+
+  if (ret >= sizeof(senml_payload))
+  {
+    LOG_ERR("SenML payload too large");
     return -E2BIG;
   }
 
@@ -240,25 +304,28 @@ static int send_telemetry(void) {
   char uri_path[128];
   ret =
       snprintf(uri_path, sizeof(uri_path), "m/%s/c/%s", DOMAIN_ID, CHANNEL_ID);
-  if (ret >= sizeof(uri_path)) {
+  if (ret >= sizeof(uri_path))
+  {
     LOG_ERR("URI path too large");
     return -E2BIG;
   }
 
-  ret = send_coap_message(uri_path, json_payload, strlen(json_payload));
-  if (ret < 0) {
+  ret = send_coap_message(uri_path, senml_payload, strlen(senml_payload));
+  if (ret < 0)
+  {
     LOG_ERR("Failed to send telemetry: %d", ret);
     return ret;
   }
 
-  LOG_INF("Telemetry sent: temp=%.2f °C, humidity=%.2f %%, battery=%d %%",
+  LOG_INF("Telemetry sent: temp=%.2f°C, humidity=%.2f%%, battery=%d%%, led=%s, time=%lld",
           current_data.temperature, current_data.humidity,
-          current_data.battery_level);
+          current_data.battery_level, current_data.led_state ? "ON" : "OFF", unix_time);
 
   return 0;
 }
 
-int main(void) {
+int main(void)
+{
   LOG_INF("Magistrala CoAP Client Starting");
 
   k_sleep(K_SECONDS(5));
@@ -272,37 +339,55 @@ int main(void) {
                                NET_EVENT_IPV4_DHCP_BOUND);
   net_mgmt_add_event_callback(&mgmt_cb);
 
-  /* Get STA interface in AP-STA mode. */
   sta_iface = net_if_get_wifi_sta();
+  if (sta_iface == NULL)
+  {
+    LOG_ERR("Failed to get WiFi STA interface");
+    LOG_ERR("Restarting system in 5 seconds...");
+    k_sleep(K_SECONDS(5));
+    sys_reboot(SYS_REBOOT_COLD);
+    return -ENODEV;
+  }
 
   int ret = connect_to_wifi(sta_iface, WIFI_SSID, WIFI_PSK);
-  if (ret) {
+  if (ret)
+  {
     LOG_ERR("Unable to Connect to (%s)", WIFI_SSID);
+    LOG_ERR("Restarting system in 5 seconds...");
+    k_sleep(K_SECONDS(5));
+    sys_reboot(SYS_REBOOT_COLD);
     return ret;
   }
 
-  /* Wait for IP address via DHCP */
-  ret = wait_for_ip_address();
-  if (ret < 0) {
+  ret = wait_for_ip_address(sta_iface);
+  if (ret < 0)
+  {
     LOG_ERR("Failed to get IP address: %d", ret);
+    LOG_ERR("Restarting system in 5 seconds...");
+    k_sleep(K_SECONDS(5));
+    sys_reboot(SYS_REBOOT_COLD);
     return ret;
   }
 
   LOG_INF("Will send telemetry every %d seconds", TELEMETRY_INTERVAL_SEC);
 
-  /* Initialize CoAP client */
   ret = coap_client_init();
-  if (ret < 0) {
+  if (ret < 0)
+  {
     LOG_ERR("Failed to initialize CoAP client: %d", ret);
     return ret;
   }
 
   LOG_INF("Starting telemetry transmission to Magistrala");
 
-  /* Send telemetry data */
-  ret = send_telemetry();
-  if (ret < 0) {
-    LOG_ERR("Failed to send telemetry: %d", ret);
+  for (int i = 0; i < 10; i++)
+  {
+    ret = send_telemetry();
+    if (ret < 0)
+    {
+      LOG_ERR("Failed to send telemetry: %d", ret);
+    }
+    k_sleep(K_SECONDS(TELEMETRY_INTERVAL_SEC));
   }
 
   return 0;
