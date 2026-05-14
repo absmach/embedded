@@ -1,6 +1,6 @@
 # Zephyr
 
-This folder contains the Zephyr target configurations for the [S0](https://absmach.github.io/s0-docs/), IoT Gateway for Wireless and Wired M-Bus Metering.
+This folder contains the Zephyr target configurations for the [A0](https://hardware.absmach.eu/docs/s0-gateway), IoT Gateway for Wireless and Wired M-Bus Metering.
 
 ## How to use
 
